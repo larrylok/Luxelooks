@@ -1,0 +1,187 @@
+/* Art Deco Custom Styles */
+
+.art-deco-divider {
+  position: relative;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #D4AF37, transparent);
+  margin: 3rem 0;
+}
+
+.art-deco-divider::before,
+.art-deco-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  background: #D4AF37;
+  transform: rotate(45deg);
+}
+
+.art-deco-divider::before {
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+/* Product card L-brackets */
+.product-card {
+  position: relative;
+}
+
+.product-card::before,
+.product-card::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid #D4AF37;
+  transition: all 0.3s ease-out;
+}
+
+.product-card::before {
+  top: 0;
+  left: 0;
+  border-right: none;
+  border-bottom: none;
+}
+
+.product-card::after {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+}
+
+.product-card:hover::before,
+.product-card:hover::after {
+  width: 32px;
+  height: 32px;
+}
+
+/* Stepped corners effect */
+.stepped-corner {
+  clip-path: polygon(
+    10px 0, 100% 0,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    0 100%, 0 10px
+  );
+}
+
+/* Gold shimmer effect */
+@keyframes goldShimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(212, 175, 55, 0.3) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: goldShimmer 3s ease-in-out infinite;
+}
+
+/* Scroll behavior */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F2EBDD;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D4AF37;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B89030;
+}
+
+/* Focus styles */
+*:focus-visible {
+  outline: 2px solid #D4AF37;
+  outline-offset: 2px;
+}
+
+/* Button hover effects */
+.art-deco-button {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s ease-out;
+}
+
+.art-deco-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.2), transparent);
+  transition: left 0.5s ease-out;
+}
+
+.art-deco-button:hover::before {
+  left: 100%;
+}
+
+/* Glass effect */
+.glass-morphism {
+  background: rgba(247, 243, 234, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+/* Diamond icon container */
+.diamond-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  transform: rotate(45deg);
+  border: 2px solid #D4AF37;
+  background: #FBF7F0;
+}
+
+.diamond-icon > * {
+  transform: rotate(-45deg);
+}
+
+/* Crosshatch texture */
+.crosshatch-bg {
+  background-image:
+    linear-gradient(45deg, rgba(212, 175, 55, 0.05) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(212, 175, 55, 0.05) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(212, 175, 55, 0.05) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(212, 175, 55, 0.05) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+}
+
+/* Sunburst gradient */
+.sunburst-gradient {
+  background: conic-gradient(
+    from 90deg at 50% 50%,
+    #F7F3EA 0deg,
+    #F2EBDD 20deg,
+    #F7F3EA 40deg,
+    #F2EBDD 60deg,
+    #F7F3EA 80deg,
+    #F2EBDD 100deg
+  );
+}

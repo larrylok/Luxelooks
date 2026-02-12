@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Marcellus&family=Josefin+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'Josefin Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #F7F3EA;
+  color: #1A1A1A;
+}
+
+code {
+  font-family: 'Space Mono', monospace;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Marcellus', serif;
+}
+
+@layer base {
+  :root {
+    --background: #F7F3EA;
+    --foreground: #1A1A1A;
+    --card: #FBF7F0;
+    --card-foreground: #1A1A1A;
+    --popover: #FBF7F0;
+    --popover-foreground: #1A1A1A;
+    --primary: #1A1A1A;
+    --primary-foreground: #F7F3EA;
+    --secondary: #F2EBDD;
+    --secondary-foreground: #1A1A1A;
+    --muted: #F2EBDD;
+    --muted-foreground: #5B5B5B;
+    --accent: #D4AF37;
+    --accent-foreground: #FFFFFF;
+    --destructive: #991B1B;
+    --destructive-foreground: #F7F3EA;
+    --border: #D4AF37;
+    --input: #D4AF37;
+    --ring: #D4AF37;
+    --radius: 0;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .art-deco-border {
+    border: 2px solid;
+    border-image: linear-gradient(45deg, #D4AF37 0%, #D4AF37 100%) 1;
+  }
+  
+  .art-deco-corner::before,
+  .art-deco-corner::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #D4AF37;
+  }
+  
+  .art-deco-corner::before {
+    top: 0;
+    left: 0;
+    border-right: none;
+    border-bottom: none;
+  }
+  
+  .art-deco-corner::after {
+    bottom: 0;
+    right: 0;
+    border-left: none;
+    border-top: none;
+  }
+  
+  .glass-effect {
+    background: rgba(247, 243, 234, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer base {
+  [data-debug-wrapper="true"] {
+    display: contents !important;
+  }
+
+  [data-debug-wrapper="true"] > * {
+    margin-left: inherit;
+    margin-right: inherit;
+    margin-top: inherit;
+    margin-bottom: inherit;
+    padding-left: inherit;
+    padding-right: inherit;
+    padding-top: inherit;
+    padding-bottom: inherit;
+    column-gap: inherit;
+    row-gap: inherit;
+    gap: inherit;
+    border-left-width: inherit;
+    border-right-width: inherit;
+    border-top-width: inherit;
+    border-bottom-width: inherit;
+    border-left-style: inherit;
+    border-right-style: inherit;
+    border-top-style: inherit;
+    border-bottom-style: inherit;
+    border-left-color: inherit;
+    border-right-color: inherit;
+    border-top-color: inherit;
+    border-bottom-color: inherit;
+  }
+}
