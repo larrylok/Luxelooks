@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, Eye, Package, RefreshCw } from "lucide-react";
+import { Search, Eye, Package, RefreshCw, Archive } from "lucide-react";
 import { toast } from "sonner";
 import api from "../../api";
 
@@ -63,6 +63,8 @@ function normalizeOrder(o) {
   const payment = o?.payment || o?.mpesa || o?.transaction || {};
   const paymentMethod = pick(payment, ["method", "type"], pick(o, ["paymentMethod"], "—"));
 
+  const archived = Boolean(o?.archived);
+
   return {
     raw: o,
     id,
@@ -75,6 +77,7 @@ function normalizeOrder(o) {
     itemsCount: items.length,
     total,
     paymentMethod,
+    archived,
   };
 }
 
@@ -105,12 +108,14 @@ export default function AdminOrders() {
 
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
 
   const loadOrders = async () => {
     setLoading(true);
     try {
-      // ✅ uses shared api client (baseURL + token)
-      const res = await api.get("/orders", { params: { page: 1, limit: 100 } });
+      const res = await api.get("/orders", {
+        params: { page: 1, limit: 100, includeArchived: showArchived },
+      });
       const data = res.data || {};
       const list = Array.isArray(data.orders) ? data.orders : Array.isArray(data) ? data : [];
       setOrdersRaw(list);
@@ -128,7 +133,8 @@ export default function AdminOrders() {
 
   useEffect(() => {
     loadOrders();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchived]);
 
   const orders = useMemo(() => ordersRaw.map(normalizeOrder).filter((o) => o.id), [ordersRaw]);
 
@@ -145,6 +151,7 @@ export default function AdminOrders() {
         o.customerEmail,
         o.customerPhone,
         o.status,
+        o.archived ? "archived" : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -168,6 +175,29 @@ export default function AdminOrders() {
     }
   };
 
+  const toggleArchive = async (order) => {
+    const id = order?.id;
+    if (!id) return;
+
+    try {
+      if (order.archived) {
+        await api.patch(`/orders/${id}/unarchive`);
+        toast.success("Order unarchived");
+      } else {
+        await api.patch(`/orders/${id}/archive`);
+        toast.success("Order archived");
+      }
+      await loadOrders();
+    } catch (error) {
+      console.error("Archive toggle error:", error);
+      const msg =
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        "Failed to update archive status";
+      toast.error(msg);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-8 gap-4">
@@ -176,15 +206,26 @@ export default function AdminOrders() {
           <p className="text-graphite">{orders.length} total orders</p>
         </div>
 
-        <button
-          onClick={loadOrders}
-          className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
-          disabled={loading}
-          title="Refresh"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs tracking-widest uppercase text-charcoal">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+            />
+            Show archived
+          </label>
+
+          <button
+            onClick={loadOrders}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
+            disabled={loading}
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters & Search */}
@@ -252,10 +293,18 @@ export default function AdminOrders() {
               {filteredOrders.map((order) => (
                 <tr
                   key={order.id}
-                  className="border-t border-gold/20 hover:bg-secondary/50"
+                  className={`border-t border-gold/20 hover:bg-secondary/50 ${order.archived ? "opacity-60" : ""
+                    }`}
                 >
                   <td className="p-4">
-                    <p className="font-bold text-charcoal">{order.orderNumber}</p>
+                    <p className="font-bold text-charcoal">
+                      {order.orderNumber}{" "}
+                      {order.archived && (
+                        <span className="ml-2 text-[10px] px-2 py-1 bg-secondary text-charcoal tracking-widest uppercase">
+                          archived
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-graphite">{order.id}</p>
                   </td>
 
@@ -286,7 +335,6 @@ export default function AdminOrders() {
 
                   <td className="p-4">
                     <div className="flex items-center space-x-2">
-                      {/* ✅ View goes to the dedicated detail page (no modal duplicate logic) */}
                       <Link
                         to={`/admin/orders/${order.id}`}
                         className="p-2 hover:bg-secondary transition-colors"
@@ -295,7 +343,7 @@ export default function AdminOrders() {
                         <Eye size={16} />
                       </Link>
 
-                      {order.status === "pending" && (
+                      {order.status === "pending" && !order.archived && (
                         <button
                           onClick={() => quickUpdateStatus(order.id, "processing")}
                           className="p-2 hover:bg-secondary transition-colors text-gold"
@@ -304,6 +352,14 @@ export default function AdminOrders() {
                           <Package size={16} />
                         </button>
                       )}
+
+                      <button
+                        onClick={() => toggleArchive(order)}
+                        className="p-2 hover:bg-secondary transition-colors"
+                        title={order.archived ? "Unarchive" : "Archive"}
+                      >
+                        <Archive size={16} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -315,4 +371,3 @@ export default function AdminOrders() {
     </div>
   );
 }
-

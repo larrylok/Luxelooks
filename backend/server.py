@@ -14,7 +14,9 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException, Query, Depends
 from pydantic import BaseModel, Field
+from bson import ObjectId 
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 import os
@@ -456,21 +458,81 @@ async def delete_product(product_id: str, session: Dict[str, Any] = Depends(requ
     return {"message": "Product deleted"}
 
 
-# ============================ ORDERS ============================
+# ============================ ORDERS ============================ 
 
 @api_router.post("/orders")
 async def create_order(order: Order):
     order_dict = order.dict()
-    now_iso = datetime.now(timezone.utc).isoformat()
 
+    # Validate order items
+    items = order_dict.get("items") or []
+    if not items:
+        raise HTTPException(status_code=400, detail="Order must contain items")
+
+    # Collect product IDs
+    product_ids = []
+    for item in items:
+        pid = item.get("productId")
+        if not pid:
+            raise HTTPException(status_code=400, detail="Each item must include productId")
+        product_ids.append(ObjectId(pid))
+
+    # Fetch products from database
+    products = await db.products.find(
+        {"_id": {"$in": product_ids}}
+    ).to_list(length=len(product_ids))
+
+    product_map = {str(p["_id"]): p for p in products}
+
+    subtotal = 0
+    sanitized_items = []
+
+    # Recalculate totals using database prices
+    for item in items:
+        pid = item["productId"]
+        qty = int(item.get("quantity", 1))
+
+        if qty < 1:
+            raise HTTPException(status_code=400, detail="Quantity must be >= 1")
+
+        product = product_map.get(pid)
+        if not product:
+            raise HTTPException(status_code=400, detail=f"Invalid productId: {pid}")
+
+        price = float(product.get("price", 0))
+        line_total = price * qty
+        subtotal += line_total
+
+        sanitized_items.append({
+            "productId": pid,
+            "name": product.get("name"),
+            "price": price,
+            "quantity": qty,
+            "lineTotal": line_total
+        })
+
+    # Replace items with sanitized version
+    order_dict["items"] = sanitized_items
+
+    # Recalculate totals server-side
+    order_dict["subtotal"] = subtotal
+    order_dict["discount"] = 0
+    order_dict["shippingCost"] = float(order_dict.get("shippingCost") or 0)
+    order_dict["total"] = order_dict["subtotal"] - order_dict["discount"] + order_dict["shippingCost"]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
     order_dict["createdAt"] = order_dict.get("createdAt") or now_iso
     order_dict["updatedAt"] = now_iso
+
     if not isinstance(order_dict.get("statusHistory"), list):
         order_dict["statusHistory"] = []
 
-    await db.orders.insert_one(order_dict)
-    return order_dict
+    result = await db.orders.insert_one(order_dict)
 
+    # Convert ObjectId to string for JSON response
+    order_dict["_id"] = str(result.inserted_id)
+
+    return order_dict
 
 # ==================== PUBLIC ORDER TRACKING (NO LOGIN) ====================
 
@@ -500,17 +562,32 @@ async def track_order_public(order_number: str):
 async def get_orders(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1),
+    includeArchived: bool = Query(False),
     session: Dict[str, Any] = Depends(require_admin),
 ):
     skip = (page - 1) * limit
-    total = await db.orders.count_documents({})
+
+    query: Dict[str, Any] = {}
+    if not includeArchived:
+        # Show non-archived orders; keep older orders visible if they don't have "archived" field yet
+        query["$or"] = [{"archived": {"$exists": False}}, {"archived": False}]
+
+    total = await db.orders.count_documents(query)
     orders = (
-        await db.orders.find({}, {"_id": 0})
+        await db.orders.find(query)
         .sort("createdAt", -1)
         .skip(skip)
         .limit(limit)
         .to_list(limit)
     )
+
+    # JSON-safe: stringify Mongo _id
+    for o in orders:
+        o["_id"] = str(o["_id"])
+        # Ensure archived is present for older docs
+        if "archived" not in o:
+            o["archived"] = False
+
     return {
         "orders": orders,
         "total": total,
@@ -519,11 +596,27 @@ async def get_orders(
     }
 
 
+def _order_lookup_filter(order_id: str) -> Dict[str, Any]:
+    """
+    Support both Mongo ObjectId (_id) and legacy 'id' field.
+    """
+    filt: Dict[str, Any] = {"id": order_id}
+    try:
+        filt = {"$or": [{"_id": ObjectId(order_id)}, {"id": order_id}]}
+    except Exception:
+        filt = {"id": order_id}
+    return filt
+
+
 @api_router.get("/orders/{order_id}")
 async def get_order(order_id: str, session: Dict[str, Any] = Depends(require_admin)):
-    order = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    order = await db.orders.find_one(_order_lookup_filter(order_id))
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    order["_id"] = str(order["_id"])
+    if "archived" not in order:
+        order["archived"] = False
     return order
 
 
@@ -542,12 +635,13 @@ async def update_order(
         "payment",
         "statusHistory",
         "packageWeight",
+        "archived",  # allow toggling archived from admin if you want
     }
 
     updates = updates or {}
     safe_updates = {k: v for k, v in updates.items() if k in allowed}
 
-    current = await db.orders.find_one({"id": order_id}, {"_id": 0})
+    current = await db.orders.find_one(_order_lookup_filter(order_id))
     if not current:
         raise HTTPException(status_code=404, detail="Order not found")
 
@@ -558,20 +652,43 @@ async def update_order(
     old_status = current.get("status")
 
     if new_status and new_status != old_status:
-    # If frontend already provided statusHistory, trust it.
-      if "statusHistory" not in safe_updates:
-        history = current.get("statusHistory") or []
-        if not isinstance(history, list):
-            history = []
-        history.append({"status": new_status, "at": now_iso, "note": None})
-        safe_updates["statusHistory"] = history
+        # If frontend already provided statusHistory, trust it.
+        if "statusHistory" not in safe_updates:
+            history = current.get("statusHistory") or []
+            if not isinstance(history, list):
+                history = []
+            history.append({"status": new_status, "at": now_iso, "note": None})
+            safe_updates["statusHistory"] = history
 
-    result = await db.orders.update_one({"id": order_id}, {"$set": safe_updates})
+    result = await db.orders.update_one(_order_lookup_filter(order_id), {"$set": safe_updates})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Order not found")
 
     return {"message": "Order updated"}
 
+
+@api_router.patch("/orders/{order_id}/archive")
+async def archive_order(order_id: str, session: Dict[str, Any] = Depends(require_admin)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    res = await db.orders.update_one(
+        _order_lookup_filter(order_id),
+        {"$set": {"archived": True, "updatedAt": now_iso}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {"ok": True}
+
+
+@api_router.patch("/orders/{order_id}/unarchive")
+async def unarchive_order(order_id: str, session: Dict[str, Any] = Depends(require_admin)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    res = await db.orders.update_one(
+        _order_lookup_filter(order_id),
+        {"$set": {"archived": False, "updatedAt": now_iso}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {"ok": True}
 
 # ============================ REVIEWS ============================
 

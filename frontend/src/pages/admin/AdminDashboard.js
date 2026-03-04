@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import {
   DollarSign,
@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "../../api";
+
+function getId(obj) {
+  return obj?._id || obj?.id || obj?.orderId || obj?.productId || "";
+}
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState({
@@ -30,14 +34,18 @@ export default function AdminDashboard() {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      // Get orders (admin protected)
+      // Get recent orders (admin protected)
       const ordersResponse = await api.get(`/orders`, {
-        params: { page: 1, limit: 5 },
+        params: { page: 1, limit: 20, includeArchived: true }, // fetch enough then filter below
       });
+
       const orders = Array.isArray(ordersResponse.data?.orders)
         ? ordersResponse.data.orders
         : [];
-      setRecentOrders(orders);
+
+      // Prefer showing non-archived in "Recent Orders"
+      const recentNonArchived = orders.filter((o) => !o?.archived).slice(0, 5);
+      setRecentOrders(recentNonArchived);
 
       // Get products for low stock check
       const productsResponse = await api.get(`/products`, {
@@ -51,21 +59,17 @@ export default function AdminDashboard() {
       // Calculate low stock products (total stock across all variants < 5)
       const lowStock = products.filter((product) => {
         const variants = Array.isArray(product?.variants) ? product.variants : [];
-        const totalStock = variants.reduce(
-          (sum, v) => sum + Number(v?.stock ?? 0),
-          0
-        );
+        const totalStock = variants.reduce((sum, v) => sum + Number(v?.stock ?? 0), 0);
         return totalStock < 5 && totalStock > 0;
       });
       setLowStockProducts(lowStock);
 
-      // Get revenue report (admin protected in your app flow; your backend currently does not require admin for this,
-      // but using api keeps everything consistent.)
+      // Revenue report
       const revenueResponse = await api.get(`/reports/revenue`);
 
-      // Calculate unique customers from the recent orders batch (safe)
+      // Customers (from recent visible orders batch)
       const uniqueCustomers = new Set(
-        orders
+        recentNonArchived
           .map((o) => (o?.customer?.email || "").trim().toLowerCase())
           .filter(Boolean)
       );
@@ -87,6 +91,8 @@ export default function AdminDashboard() {
       setLoading(false);
     }
   };
+
+  const lowStockTop = useMemo(() => lowStockProducts.slice(0, 5), [lowStockProducts]);
 
   if (loading) {
     return (
@@ -181,7 +187,7 @@ export default function AdminDashboard() {
               </p>
 
               <div className="space-y-2">
-                {lowStockProducts.slice(0, 5).map((product) => {
+                {lowStockTop.map((product) => {
                   const variants = Array.isArray(product?.variants) ? product.variants : [];
                   const totalStock = variants.reduce(
                     (sum, v) => sum + Number(v?.stock ?? 0),
@@ -195,7 +201,7 @@ export default function AdminDashboard() {
 
                   return (
                     <div
-                      key={product.id}
+                      key={getId(product) || product?.name}
                       className="flex items-center justify-between bg-card p-3 border border-gold/20"
                     >
                       <div className="flex items-center space-x-3">
@@ -210,9 +216,7 @@ export default function AdminDashboard() {
                         )}
 
                         <div>
-                          <p className="text-sm font-bold text-charcoal">
-                            {product.name}
-                          </p>
+                          <p className="text-sm font-bold text-charcoal">{product.name}</p>
                           <p className="text-xs text-graphite">{product.category}</p>
                         </div>
                       </div>
@@ -252,44 +256,47 @@ export default function AdminDashboard() {
             <p className="text-center py-8 text-graphite">No orders yet</p>
           ) : (
             <div className="space-y-4">
-              {recentOrders.map((order) => (
-                <Link
-                  key={order.id}
-                  to={`/admin/orders/${order.id}`}
-                  className="block p-4 border border-gold/20 hover:border-gold transition-colors"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-bold text-charcoal">
-                      {order.orderNumber || order.id}
-                    </span>
-                    <span
-                      className={`px-2 py-1 text-xs tracking-widest uppercase ${
-                        order.status === "pending"
-                          ? "bg-secondary text-charcoal"
-                          : order.status === "processing"
-                          ? "bg-gold/20 text-gold"
-                          : order.status === "shipped"
-                          ? "bg-gold/10 text-charcoal"
-                          : "bg-green-100 text-green-700"
-                      }`}
-                    >
-                      {order.status || "unknown"}
-                    </span>
-                  </div>
-                  <p className="text-sm text-graphite mb-2">
-                    {order?.customer?.name || "—"}
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-graphite">
-                      {(order?.items?.length || 0)} item
-                      {(order?.items?.length || 0) !== 1 ? "s" : ""}
-                    </span>
-                    <span className="text-sm font-bold text-gold">
-                      KES {Number(order?.total || 0).toLocaleString()}
-                    </span>
-                  </div>
-                </Link>
-              ))}
+              {recentOrders.map((order) => {
+                const oid = getId(order);
+                return (
+                  <Link
+                    key={oid || order?.orderNumber || order?.createdAt}
+                    to={`/admin/orders/${oid}`}
+                    className="block p-4 border border-gold/20 hover:border-gold transition-colors"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-bold text-charcoal">
+                        {order.orderNumber || oid}
+                      </span>
+                      <span
+                        className={`px-2 py-1 text-xs tracking-widest uppercase ${
+                          order.status === "pending"
+                            ? "bg-secondary text-charcoal"
+                            : order.status === "processing"
+                            ? "bg-gold/20 text-gold"
+                            : order.status === "shipped"
+                            ? "bg-gold/10 text-charcoal"
+                            : "bg-green-100 text-green-700"
+                        }`}
+                      >
+                        {order.status || "unknown"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-graphite mb-2">
+                      {order?.customer?.name || "—"}
+                    </p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-graphite">
+                        {(order?.items?.length || 0)} item
+                        {(order?.items?.length || 0) !== 1 ? "s" : ""}
+                      </span>
+                      <span className="text-sm font-bold text-gold">
+                        KES {Number(order?.total || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
@@ -334,4 +341,4 @@ export default function AdminDashboard() {
       </div>
     </div>
   );
-} 
+}

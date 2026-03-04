@@ -14,6 +14,7 @@ import {
   FileText,
   Clock,
   MessageSquareText,
+  Archive,
 } from "lucide-react";
 
 function toNum(x, fallback = 0) {
@@ -167,8 +168,12 @@ export default function AdminOrderDetail() {
       .filter(Boolean)
       .sort((a, b) => new Date(a.at || 0) - new Date(b.at || 0));
 
+    const id = o.id || o._id || orderId;
+    const archived = Boolean(o.archived);
+
     return {
-      id: o.id || o._id || orderId,
+      id,
+      archived,
       orderNumber: o.orderNumber || o.ref || o.reference || o.id || orderId,
       createdAt: o.createdAt || o.created_at,
       updatedAt: o.updatedAt || o.updated_at,
@@ -256,9 +261,36 @@ export default function AdminOrderDetail() {
     }
   };
 
+  const toggleArchive = async () => {
+    if (!normalized?.id) return;
+    try {
+      if (normalized.archived) {
+        await api.patch(`/orders/${normalized.id}/unarchive`);
+        toast.success("Order unarchived");
+      } else {
+        await api.patch(`/orders/${normalized.id}/archive`);
+        toast.success("Order archived");
+      }
+      await loadOrder();
+    } catch (err) {
+      console.error(err);
+      const msg =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        "Failed to update archive status";
+      toast.error(msg);
+    }
+  };
+
   const StatusPill = ({ value }) => (
     <span className="text-xs tracking-widest uppercase border border-gold/30 px-2 py-1 text-graphite">
       {String(value || "unknown")}
+    </span>
+  );
+
+  const ArchivedPill = () => (
+    <span className="text-xs tracking-widest uppercase border border-gold/30 px-2 py-1 bg-secondary text-charcoal">
+      archived
     </span>
   );
 
@@ -301,6 +333,7 @@ export default function AdminOrderDetail() {
 
           <div className="mt-2 flex items-center gap-3 flex-wrap">
             <StatusPill value={normalized.status} />
+            {normalized.archived ? <ArchivedPill /> : null}
             <p className="text-xs text-graphite">
               Created: <span className="font-semibold">{safeDate(normalized.createdAt)}</span>
             </p>
@@ -310,15 +343,28 @@ export default function AdminOrderDetail() {
           </div>
         </div>
 
-        <button
-          onClick={saveChanges}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-charcoal text-gold border border-gold hover:bg-transparent hover:text-charcoal transition-all duration-300 text-xs tracking-widest uppercase font-bold disabled:opacity-50"
-          disabled={saving || loading || !order}
-          type="button"
-        >
-          <Save className="w-4 h-4" />
-          {saving ? "Saving…" : "Save changes"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleArchive}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase font-bold disabled:opacity-50"
+            disabled={loading || !order}
+            type="button"
+            title={normalized.archived ? "Unarchive" : "Archive"}
+          >
+            <Archive className="w-4 h-4" />
+            {normalized.archived ? "Unarchive" : "Archive"}
+          </button>
+
+          <button
+            onClick={saveChanges}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-charcoal text-gold border border-gold hover:bg-transparent hover:text-charcoal transition-all duration-300 text-xs tracking-widest uppercase font-bold disabled:opacity-50"
+            disabled={saving || loading || !order}
+            type="button"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
       </div>
 
       {/* Body */}
