@@ -59,7 +59,15 @@ export default function AdminProducts() {
   const fileInputRef = useRef(null);
   const [uploadingImages, setUploadingImages] = useState(false);
 
-  const EMPTY_VARIANT = { id: "", size: "", color: "", material: "", stock: 0, sku: "", priceAdjustment: 0 };
+  const EMPTY_VARIANT = {
+    id: "",
+    size: "",
+    color: "",
+    material: "",
+    stock: 0,
+    sku: "",
+    priceAdjustment: 0,
+  };
 
   const [formData, setFormData] = useState({
     name: "",
@@ -71,6 +79,8 @@ export default function AdminProducts() {
     category: "Necklaces",
     tags: "",
     images: [],
+    primaryImage: "", // ✅ new
+    modelImage: "", // ✅ new
     variants: [{ ...EMPTY_VARIANT }],
     status: "active",
     isFeatured: false,
@@ -121,6 +131,8 @@ export default function AdminProducts() {
       category: "Necklaces",
       tags: "",
       images: [],
+      primaryImage: "", // ✅ keep string (not null)
+      modelImage: "", // ✅ keep string (not null)
       variants: [{ ...EMPTY_VARIANT }],
       status: "active",
       isFeatured: false,
@@ -156,10 +168,16 @@ export default function AdminProducts() {
         }))
       : [{ ...EMPTY_VARIANT, id: ensureVariantId({}) }];
 
+    const images = safeArr(product?.images);
+    const primary = safeStr(product?.primaryImage) || images[0] || "";
+    const model = safeStr(product?.modelImage) || "";
+
     setFormData({
       ...product,
       tags: safeArr(product?.tags).join(", "),
-      images: safeArr(product?.images),
+      images,
+      primaryImage: primary, // ✅ fallback to first image
+      modelImage: model, // ✅ fallback to none
       variants,
       salePrice: product?.salePrice ?? null,
       basePrice: safeNum(product?.basePrice, 0),
@@ -183,12 +201,18 @@ export default function AdminProducts() {
         }))
       : [{ ...EMPTY_VARIANT, id: ensureVariantId({}) }];
 
+    const images = safeArr(product?.images);
+    const primary = safeStr(product?.primaryImage) || images[0] || "";
+
+    // For duplicate: keep images, but reset model hover (safer)
     setFormData({
       ...product,
       name: `${product.name} (Copy)`,
       slug: `${safeStr(product.slug || "product")}-copy`,
       tags: safeArr(product?.tags).join(", "),
-      images: safeArr(product?.images),
+      images,
+      primaryImage: primary, // ✅ keep something sensible
+      modelImage: "", // ✅ reset hover
       variants,
       salePrice: product?.salePrice ?? null,
       status: "draft",
@@ -240,6 +264,15 @@ export default function AdminProducts() {
         return;
       }
 
+      const images = safeArr(formData.images);
+
+      // ✅ ensure role images exist in images[]
+      const primaryImage = safeStr(formData.primaryImage) || "";
+      const modelImage = safeStr(formData.modelImage) || "";
+
+      const primaryOk = !primaryImage || images.includes(primaryImage);
+      const modelOk = !modelImage || images.includes(modelImage);
+
       const productData = {
         ...formData,
         name,
@@ -247,7 +280,9 @@ export default function AdminProducts() {
         basePrice,
         salePrice,
         tags: tagsArray,
-        images: safeArr(formData.images),
+        images,
+        primaryImage: primaryOk ? primaryImage : "", // ✅ new
+        modelImage: modelOk ? modelImage : "", // ✅ new
         variants: variantsClean,
         collections: safeArr(formData.collections),
         relatedProductIds: safeArr(formData.relatedProductIds),
@@ -310,9 +345,14 @@ export default function AdminProducts() {
     merged.tags = safeArr(merged.tags);
     merged.variants = safeArr(merged.variants);
 
+    // keep role images safe
+    if (merged.primaryImage && !merged.images.includes(merged.primaryImage)) merged.primaryImage = "";
+    if (merged.modelImage && !merged.images.includes(merged.modelImage)) merged.modelImage = "";
+
     // enforce numbers
     merged.basePrice = safeNum(merged.basePrice, 0);
-    merged.salePrice = merged.salePrice === null ? null : safeNum(merged.salePrice, merged.salePrice);
+    merged.salePrice =
+      merged.salePrice === null ? null : safeNum(merged.salePrice, merged.salePrice);
 
     await api.put(`/products/${productId}`, merged);
   };
@@ -436,10 +476,16 @@ export default function AdminProducts() {
         return;
       }
 
-      setFormData((prev) => ({
-        ...prev,
-        images: [...safeArr(prev.images), ...uploaded],
-      }));
+      setFormData((prev) => {
+        const nextImages = [...safeArr(prev.images), ...uploaded];
+        // If no primary set yet, set first available as primary
+        const nextPrimary = safeStr(prev.primaryImage) || (nextImages[0] || "");
+        return {
+          ...prev,
+          images: nextImages,
+          primaryImage: nextPrimary,
+        };
+      });
 
       toast.success(`Uploaded ${uploaded.length} image(s)`);
     } catch (err) {
@@ -454,9 +500,38 @@ export default function AdminProducts() {
     }
   };
 
+  const setPrimaryImage = (img) => {
+    const u = String(img || "");
+    if (!u) return;
+    setFormData((prev) => ({ ...prev, primaryImage: u }));
+  };
+
+  const setModelImage = (img) => {
+    const u = String(img || "");
+    if (!u) return;
+    setFormData((prev) => ({ ...prev, modelImage: u }));
+  };
+
   const removeImage = (index) => {
-    const newImages = safeArr(formData.images).filter((_, i) => i !== index);
-    setFormData({ ...formData, images: newImages });
+    const currentImages = safeArr(formData.images);
+    const removed = currentImages[index];
+    const newImages = currentImages.filter((_, i) => i !== index);
+
+    setFormData((prev) => {
+      let nextPrimary = safeStr(prev.primaryImage);
+      let nextModel = safeStr(prev.modelImage);
+
+      if (removed && nextPrimary === removed) nextPrimary = "";
+      if (removed && nextModel === removed) nextModel = "";
+
+      // if primary cleared but we still have images, auto pick first
+      if (!nextPrimary && newImages.length) nextPrimary = newImages[0];
+
+      // if model cleared, keep empty unless user sets again
+      if (nextModel && !newImages.includes(nextModel)) nextModel = "";
+
+      return { ...prev, images: newImages, primaryImage: nextPrimary, modelImage: nextModel };
+    });
   };
 
   const filteredProducts = products.filter((product) =>
@@ -477,6 +552,7 @@ export default function AdminProducts() {
           onClick={handleCreateProduct}
           className="flex items-center space-x-2 px-6 py-3 bg-gold text-white hover:bg-gold/90 transition-colors"
           data-testid="create-product-button"
+          type="button"
         >
           <Plus size={20} />
           <span>Add Product</span>
@@ -533,6 +609,7 @@ export default function AdminProducts() {
             <button
               onClick={handleBulkAction}
               className="px-4 py-2 bg-gold text-white text-sm hover:bg-gold/90"
+              type="button"
             >
               Apply Action
             </button>
@@ -575,8 +652,10 @@ export default function AdminProducts() {
                 const variants = safeArr(product?.variants);
                 const totalStock = variants.reduce((sum, v) => sum + safeNum(v?.stock, 0), 0);
 
+                // ✅ prefer primaryImage, fallback to first image
                 const img =
-                  Array.isArray(product?.images) && product.images.length ? product.images[0] : "";
+                  safeStr(product?.primaryImage) ||
+                  (Array.isArray(product?.images) && product.images.length ? product.images[0] : "");
 
                 return (
                   <tr key={product.id} className="border-t border-gold/20 hover:bg-secondary/50">
@@ -707,7 +786,11 @@ export default function AdminProducts() {
                   <h2 className="font-serif text-3xl text-charcoal">
                     {editingProduct ? "Edit Product" : "Create Product"}
                   </h2>
-                  <button onClick={() => setShowModal(false)} className="p-2 hover:bg-secondary" type="button">
+                  <button
+                    onClick={() => setShowModal(false)}
+                    className="p-2 hover:bg-secondary"
+                    type="button"
+                  >
                     <X size={24} />
                   </button>
                 </div>
@@ -740,7 +823,9 @@ export default function AdminProducts() {
                     <input
                       type="text"
                       value={formData.shortDescription}
-                      onChange={(e) => setFormData({ ...formData, shortDescription: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({ ...formData, shortDescription: e.target.value })
+                      }
                       className="w-full px-4 py-2 border border-gold/30 bg-transparent focus:border-gold focus:ring-0"
                       maxLength={150}
                     />
@@ -750,7 +835,9 @@ export default function AdminProducts() {
                     <label className="block text-sm font-bold mb-2">Long Description</label>
                     <textarea
                       value={formData.longDescription}
-                      onChange={(e) => setFormData({ ...formData, longDescription: e.target.value })}
+                      onChange={(e) =>
+                        setFormData({ ...formData, longDescription: e.target.value })
+                      }
                       className="w-full px-4 py-2 border border-gold/30 bg-transparent focus:border-gold focus:ring-0"
                       rows={4}
                     />
@@ -823,31 +910,122 @@ export default function AdminProducts() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-4">
-                      {safeArr(formData.images).map((img, index) => (
-                        <div key={index} className="relative">
-                          <img
-                            src={absolutizeMaybe(img)}
-                            alt={`Product ${index + 1}`}
-                            className="w-full h-24 object-cover"
-                          />
-                          <button
-                            onClick={() => removeImage(index)}
-                            className="absolute top-1 right-1 p-1 bg-destructive text-white"
-                            type="button"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      ))}
+                    {/* ✅ Role selectors */}
+                    <div className="grid md:grid-cols-2 gap-4 mb-3">
+                      <div>
+                        <label className="block text-xs tracking-widest uppercase font-bold text-graphite mb-2">
+                          Default image (storefront)
+                        </label>
+                        <select
+                          value={formData.primaryImage || ""}
+                          onChange={(e) =>
+                            setFormData({ ...formData, primaryImage: e.target.value })
+                          }
+                          className="w-full px-3 py-2 border border-gold/30 bg-transparent focus:border-gold focus:ring-0"
+                        >
+                          <option value="">Auto (first image)</option>
+                          {safeArr(formData.images).map((img, i) => (
+                            <option key={`${img}-${i}`} value={img}>
+                              Image #{i + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs tracking-widest uppercase font-bold text-graphite mb-2">
+                          Model image (hover)
+                        </label>
+                        <select
+                          value={formData.modelImage || ""}
+                          onChange={(e) => setFormData({ ...formData, modelImage: e.target.value })}
+                          className="w-full px-3 py-2 border border-gold/30 bg-transparent focus:border-gold focus:ring-0"
+                        >
+                          <option value="">None</option>
+                          {safeArr(formData.images).map((img, i) => (
+                            <option key={`${img}-${i}`} value={img}>
+                              Image #{i + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
+
+                    <div className="grid grid-cols-4 gap-4">
+                      {safeArr(formData.images).map((img, index) => {
+                        const isPrimary = safeStr(formData.primaryImage) === img;
+                        const isModel = safeStr(formData.modelImage) === img;
+
+                        return (
+                          <div key={index} className="relative">
+                            <img
+                              src={absolutizeMaybe(img)}
+                              alt={`Product ${index + 1}`}
+                              className="w-full h-24 object-cover"
+                            />
+
+                            {/* role badges */}
+                            <div className="absolute bottom-1 left-1 flex gap-1">
+                              {isPrimary ? (
+                                <span className="text-[10px] px-2 py-1 bg-gold text-white tracking-widest uppercase">
+                                  default
+                                </span>
+                              ) : null}
+                              {isModel ? (
+                                <span className="text-[10px] px-2 py-1 bg-secondary text-charcoal tracking-widest uppercase">
+                                  model
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {/* quick role actions */}
+                            <div className="absolute top-1 left-1 flex gap-1">
+                              <button
+                                onClick={() => setPrimaryImage(img)}
+                                className="text-[10px] px-2 py-1 bg-black/70 text-white hover:bg-black/80 tracking-widest uppercase"
+                                type="button"
+                                title="Set as default image"
+                              >
+                                Default
+                              </button>
+                              <button
+                                onClick={() => setModelImage(img)}
+                                className="text-[10px] px-2 py-1 bg-black/70 text-white hover:bg-black/80 tracking-widest uppercase"
+                                type="button"
+                                title="Set as model hover image"
+                              >
+                                Model
+                              </button>
+                            </div>
+
+                            <button
+                              onClick={() => removeImage(index)}
+                              className="absolute top-1 right-1 p-1 bg-destructive text-white"
+                              type="button"
+                              title="Remove image"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-xs text-graphite mt-2">
+                      Tip: Set <b>Default</b> to the product-only shot, and <b>Model</b> to the
+                      on-body shot.
+                    </p>
                   </div>
 
                   {/* Variants */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="block text-sm font-bold">Variants</label>
-                      <button onClick={addVariant} className="text-sm text-gold hover:underline" type="button">
+                      <button
+                        onClick={addVariant}
+                        className="text-sm text-gold hover:underline"
+                        type="button"
+                      >
                         + Add Variant
                       </button>
                     </div>
@@ -874,14 +1052,18 @@ export default function AdminProducts() {
                               type="text"
                               placeholder="Material"
                               value={variant.material || ""}
-                              onChange={(e) => updateVariant(index, "material", e.target.value)}
+                              onChange={(e) =>
+                                updateVariant(index, "material", e.target.value)
+                              }
                               className="px-2 py-1 border border-gold/30 bg-transparent text-sm"
                             />
                             <input
                               type="number"
                               placeholder="Stock"
                               value={safeNum(variant.stock, 0)}
-                              onChange={(e) => updateVariant(index, "stock", parseInt(e.target.value, 10) || 0)}
+                              onChange={(e) =>
+                                updateVariant(index, "stock", parseInt(e.target.value, 10) || 0)
+                              }
                               className="px-2 py-1 border border-gold/30 bg-transparent text-sm"
                             />
                             <input
@@ -966,7 +1148,9 @@ export default function AdminProducts() {
                       <input
                         type="checkbox"
                         checked={!!formData.isFeatured}
-                        onChange={(e) => setFormData({ ...formData, isFeatured: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, isFeatured: e.target.checked })
+                        }
                         className="accent-gold"
                       />
                       <span className="text-sm">Featured</span>
@@ -975,7 +1159,9 @@ export default function AdminProducts() {
                       <input
                         type="checkbox"
                         checked={!!formData.isBestseller}
-                        onChange={(e) => setFormData({ ...formData, isBestseller: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, isBestseller: e.target.checked })
+                        }
                         className="accent-gold"
                       />
                       <span className="text-sm">Bestseller</span>
@@ -984,7 +1170,9 @@ export default function AdminProducts() {
                       <input
                         type="checkbox"
                         checked={!!formData.isNewArrival}
-                        onChange={(e) => setFormData({ ...formData, isNewArrival: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, isNewArrival: e.target.checked })
+                        }
                         className="accent-gold"
                       />
                       <span className="text-sm">New Arrival</span>
@@ -993,7 +1181,9 @@ export default function AdminProducts() {
                       <input
                         type="checkbox"
                         checked={!!formData.allowPreorder}
-                        onChange={(e) => setFormData({ ...formData, allowPreorder: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, allowPreorder: e.target.checked })
+                        }
                         className="accent-gold"
                       />
                       <span className="text-sm">Allow Preorder</span>
@@ -1002,7 +1192,9 @@ export default function AdminProducts() {
                       <input
                         type="checkbox"
                         checked={!!formData.giftWrapAvailable}
-                        onChange={(e) => setFormData({ ...formData, giftWrapAvailable: e.target.checked })}
+                        onChange={(e) =>
+                          setFormData({ ...formData, giftWrapAvailable: e.target.checked })
+                        }
                         className="accent-gold"
                       />
                       <span className="text-sm">Gift Wrap Available</span>
@@ -1040,7 +1232,6 @@ export default function AdminProducts() {
                     {editingProduct ? "Update Product" : "Create Product"}
                   </button>
                 </div>
-
               </div>
             </div>
           </div>

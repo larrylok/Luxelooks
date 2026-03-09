@@ -1,7 +1,3 @@
-// src/pages/Home.js  (FULL COPY-PASTE FILE)
-// Fix: Uses shared axios client (api) so baseURL is consistent.
-// api.baseURL already includes "/api", so call api.get("/products") not "/api/products".
-
 import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams, useLocation, Link } from "react-router-dom";
 import { Heart, ShoppingCart, Eye, SlidersHorizontal } from "lucide-react";
@@ -15,6 +11,42 @@ function normalizeId(p) {
   return p?.id || p?._id || p?.productId || p?.slug;
 }
 
+function safeStr(x) {
+  return String(x ?? "").trim();
+}
+
+// ---- image URL helpers (same logic as AdminProducts) ----
+function getApiOrigin() {
+  const base = String(api?.defaults?.baseURL || "");
+  return base.replace(/\/api\/?$/, "");
+}
+
+function absolutizeMaybe(url) {
+  const u = String(url || "");
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  const origin = getApiOrigin();
+  return origin ? `${origin}${u}` : u;
+}
+
+function pickDefaultImage(product) {
+  const primary = safeStr(product?.primaryImage);
+  if (primary) return primary;
+
+  const imgs = Array.isArray(product?.images) ? product.images : [];
+  return imgs[0] || "";
+}
+
+function pickHoverImage(product) {
+  // ✅ prefer admin-selected model image
+  const model = safeStr(product?.modelImage);
+  if (model) return model;
+
+  // ✅ fallback to second image if exists
+  const imgs = Array.isArray(product?.images) ? product.images : [];
+  return imgs[1] || "";
+}
+
 export default function Home() {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
@@ -25,7 +57,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [totalPages, setTotalPages] = useState(1); // (not used in UI yet, kept)
 
   const [filters, setFilters] = useState({
     category: "",
@@ -88,16 +120,12 @@ export default function Home() {
       if (filters.sort) params.sort = filters.sort;
       if (filters.collection) params.collection = filters.collection;
 
-      // ✅ IMPORTANT:
-      // api.baseURL already has "/api", so call "/products"
+      // ✅ api.baseURL already has "/api"
       const response = await api.get("/products", { params });
 
       const data = response?.data;
 
       // Support multiple backend shapes:
-      // 1) { products: [], pages: n }
-      // 2) { items: [], pages: n }
-      // 3) [] (direct array)
       const list = Array.isArray(data)
         ? data
         : Array.isArray(data?.products)
@@ -344,6 +372,15 @@ export default function Home() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
             {products.map((product) => {
               const pid = String(normalizeId(product) || "");
+
+              const defaultImgRaw = pickDefaultImage(product);
+              const hoverImgRaw = pickHoverImage(product);
+
+              const defaultImg = absolutizeMaybe(defaultImgRaw);
+              const hoverImg = absolutizeMaybe(hoverImgRaw);
+
+              const canSwap = !!hoverImg && hoverImg !== defaultImg;
+
               return (
                 <div
                   key={pid}
@@ -351,12 +388,30 @@ export default function Home() {
                 >
                   <div className="relative overflow-hidden">
                     <Link to={`/products/${product.slug}`}>
-                      <img
-                        src={product.images?.[0]}
-                        alt={product.name}
-                        className="w-full h-80 object-cover group-hover:scale-105 transition-transform duration-500"
-                        loading="lazy"
-                      />
+                      {/* ✅ hover image swap */}
+                      <div className="relative w-full h-80">
+                        {defaultImg ? (
+                          <img
+                            src={defaultImg}
+                            alt={product.name}
+                            className={`absolute inset-0 w-full h-full object-cover transition-all duration-500 ${
+                              canSwap ? "opacity-100 group-hover:opacity-0" : "opacity-100"
+                            } group-hover:scale-105`}
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="absolute inset-0 w-full h-full bg-black/5 border border-gold/10" />
+                        )}
+
+                        {canSwap ? (
+                          <img
+                            src={hoverImg}
+                            alt={`${product.name} (on model)`}
+                            className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-100 transition-all duration-500 group-hover:scale-105"
+                            loading="lazy"
+                          />
+                        ) : null}
+                      </div>
                     </Link>
 
                     <div className="absolute top-4 right-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">

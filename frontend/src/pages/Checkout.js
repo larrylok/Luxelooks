@@ -9,13 +9,11 @@ import {
   MapPin,
   Phone as PhoneIcon,
 } from "lucide-react";
-import axios from "axios";
 import storage from "@/utils/storage";
 import analytics from "@/utils/analytics";
 import { toast } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
-const API = `${BACKEND_URL}/api`;
+import api from "@/api"; // ✅ shared axios client (baseURL already includes /api)
 
 // ---- helpers ----
 function buildOrderNumber() {
@@ -32,6 +30,32 @@ function safeStr(x) {
 function safeNum(x, fallback = 0) {
   const n = Number(x);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function safeArr(x) {
+  return Array.isArray(x) ? x : [];
+}
+
+// Converts "/uploads/xxx.jpg" => "http://127.0.0.1:8000/uploads/xxx.jpg" (dev)
+// Leaves absolute URLs (http/https) unchanged
+function getApiOrigin() {
+  const base = String(api?.defaults?.baseURL || "");
+  return base.replace(/\/api\/?$/, "");
+}
+
+function absolutizeMaybe(url) {
+  const u = String(url || "");
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  const origin = getApiOrigin();
+  return origin ? `${origin}${u}` : u;
+}
+
+function pickDefaultImage(product) {
+  const primary = safeStr(product?.primaryImage);
+  if (primary) return primary;
+  const imgs = safeArr(product?.images);
+  return imgs[0] || "";
 }
 
 export default function Checkout() {
@@ -79,17 +103,21 @@ export default function Checkout() {
       return;
     }
 
+    cartData.items = safeArr(cartData.items);
     setCart(cartData);
 
     try {
       const productPromises = cartData.items.map((item) =>
-        axios.get(`${API}/products/${item.productId}`)
+        api.get(`/products/${item.productId}`)
       );
 
       const responses = await Promise.all(productPromises);
       const productsMap = {};
       responses.forEach((res) => {
-        productsMap[res.data.id] = res.data;
+        const p = res?.data;
+        if (!p) return;
+        if (p?.id) productsMap[p.id] = p;
+        if (p?._id) productsMap[p._id] = p;
       });
       setProducts(productsMap);
     } catch (error) {
@@ -104,22 +132,21 @@ export default function Checkout() {
     let subtotal = 0;
     let giftWrapTotal = 0;
 
-    cart?.items?.forEach((item) => {
-      const product = products[item.productId];
+    safeArr(cart?.items).forEach((item) => {
+      const product = products?.[item.productId];
       if (!product) return;
 
-      const variant = Array.isArray(product.variants)
-        ? product.variants.find((v) => v.id === item.variantId)
-        : null;
+      const variant = safeArr(product.variants).find((v) => v?.id === item.variantId);
 
       const basePrice = safeNum(product.salePrice || product.basePrice || 0, 0);
       const adj = safeNum(variant?.priceAdjustment || 0, 0);
+      const qty = safeNum(item.quantity || 0, 0);
       const itemPrice = basePrice + adj;
 
-      subtotal += itemPrice * safeNum(item.quantity || 0, 0);
+      subtotal += itemPrice * qty;
 
       if (item.giftWrap && product.giftWrapAvailable) {
-        giftWrapTotal += safeNum(product.giftWrapCost || 0, 0) * safeNum(item.quantity || 0, 0);
+        giftWrapTotal += safeNum(product.giftWrapCost || 0, 0) * qty;
       }
     });
 
@@ -139,7 +166,7 @@ export default function Checkout() {
       return;
     }
 
-    analytics.initiateCheckout(totals.total, cart?.items?.length || 0);
+    analytics.initiateCheckout(totals.total, safeArr(cart?.items).length || 0);
     setStep(2);
   };
 
@@ -157,6 +184,7 @@ export default function Checkout() {
     setTimeout(async () => {
       try {
         const orderNumber = buildOrderNumber();
+        const nowIso = new Date().toISOString();
 
         const orderData = {
           orderNumber,
@@ -165,7 +193,7 @@ export default function Checkout() {
             phone: safeStr(customerInfo.phone),
           },
           delivery: deliveryInfo,
-          items: cart?.items || [],
+          items: safeArr(cart?.items),
           subtotal: totals.subtotal,
           giftWrapTotal: totals.giftWrapTotal,
           discount: 0,
@@ -175,21 +203,21 @@ export default function Checkout() {
             method: "M-Pesa",
             status: "confirmed",
             mpesaTransactionId: `MOCK${Date.now()}`,
-            confirmedAt: new Date().toISOString(),
+            confirmedAt: nowIso,
           },
           status: "pending",
           statusHistory: [
             {
               status: "pending",
               // keep BOTH keys so TrackOrder works no matter what
-              at: new Date().toISOString(),
-              timestamp: new Date().toISOString(),
+              at: nowIso,
+              timestamp: nowIso,
               note: "Order placed",
             },
           ],
         };
 
-        const response = await axios.post(`${API}/orders`, orderData);
+        const response = await api.post(`/orders`, orderData);
         setOrder(response.data);
 
         // backup for guest checkout
@@ -197,7 +225,7 @@ export default function Checkout() {
           await storage.set("lastOrder", {
             orderNumber: response.data?.orderNumber || orderNumber,
             phone: safeStr(customerInfo.phone),
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso,
           });
         } catch (e) {
           console.warn("Failed to store lastOrder", e);
@@ -205,7 +233,7 @@ export default function Checkout() {
 
         // Track purchase
         try {
-          analytics.purchase(response.data?.id, totals.total, cart?.items || []);
+          analytics.purchase(response.data?.id, totals.total, safeArr(cart?.items));
         } catch (e) {
           // non-blocking
           console.warn("analytics.purchase failed:", e);
@@ -555,6 +583,7 @@ export default function Checkout() {
                   <button
                     onClick={() => setStep(1)}
                     className="flex-1 py-4 border border-gold text-charcoal hover:bg-secondary transition-all duration-300 text-sm tracking-widest uppercase font-bold"
+                    type="button"
                   >
                     Back
                   </button>
@@ -563,6 +592,7 @@ export default function Checkout() {
                     disabled={processingPayment}
                     className="flex-1 py-4 bg-charcoal text-gold border border-gold hover:bg-transparent hover:text-charcoal transition-all duration-300 text-sm tracking-widest uppercase font-bold disabled:opacity-50 flex items-center justify-center space-x-2"
                     data-testid="pay-button"
+                    type="button"
                   >
                     {processingPayment ? (
                       <>
@@ -695,28 +725,33 @@ export default function Checkout() {
               </h2>
 
               <div className="space-y-4 mb-6">
-                {cart?.items?.map((item, idx) => {
-                  const product = products[item.productId];
+                {safeArr(cart?.items).map((item, idx) => {
+                  const product = products?.[item.productId];
                   if (!product) return null;
 
-                  const variant = Array.isArray(product.variants)
-                    ? product.variants.find((v) => v.id === item.variantId)
-                    : null;
+                  const variant = safeArr(product.variants).find((v) => v?.id === item.variantId);
 
                   const price = safeNum(product.salePrice || product.basePrice || 0, 0);
                   const itemPrice = price + safeNum(variant?.priceAdjustment || 0, 0);
 
+                  const img = absolutizeMaybe(pickDefaultImage(product));
+
                   return (
                     <div key={idx} className="flex space-x-4 pb-4 border-b border-gold/20">
-                      <img
-                        src={product.images?.[0]}
-                        alt={product.name}
-                        className="w-16 h-16 object-cover"
-                      />
+                      {img ? (
+                        <img
+                          src={img}
+                          alt={product.name}
+                          className="w-16 h-16 object-cover"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 border border-gold/20 bg-black/5" />
+                      )}
+
                       <div className="flex-1">
                         <p className="text-sm font-bold text-charcoal">{product.name}</p>
                         <p className="text-xs text-graphite">
-                          {variant?.color || "Default"} × {item.quantity}
+                          {variant?.color || "Default"} × {safeNum(item.quantity || 0, 0)}
                         </p>
                         {item.giftWrap && <p className="text-xs text-gold">+ Gift wrap</p>}
                       </div>
@@ -735,15 +770,15 @@ export default function Checkout() {
                 <div className="flex justify-between text-sm">
                   <span className="text-graphite">Subtotal</span>
                   <span className="text-charcoal font-bold">
-                    KES {totals.subtotal.toLocaleString()}
+                    KES {safeNum(totals.subtotal || 0, 0).toLocaleString()}
                   </span>
                 </div>
 
-                {totals.giftWrapTotal > 0 && (
+                {safeNum(totals.giftWrapTotal || 0, 0) > 0 && (
                   <div className="flex justify-between text-sm">
                     <span className="text-graphite">Gift Wrap</span>
                     <span className="text-charcoal font-bold">
-                      KES {totals.giftWrapTotal.toLocaleString()}
+                      KES {safeNum(totals.giftWrapTotal || 0, 0).toLocaleString()}
                     </span>
                   </div>
                 )}
@@ -751,7 +786,7 @@ export default function Checkout() {
                 <div className="flex justify-between text-sm">
                   <span className="text-graphite">Shipping</span>
                   <span className="text-charcoal font-bold">
-                    KES {totals.shippingCost.toLocaleString()}
+                    KES {safeNum(totals.shippingCost || 0, 0).toLocaleString()}
                   </span>
                 </div>
               </div>
@@ -759,7 +794,7 @@ export default function Checkout() {
               <div className="flex justify-between text-xl pt-6">
                 <span className="font-serif text-charcoal">Total</span>
                 <span className="font-serif text-gold font-bold">
-                  KES {totals.total.toLocaleString()}
+                  KES {safeNum(totals.total || 0, 0).toLocaleString()}
                 </span>
               </div>
             </div>

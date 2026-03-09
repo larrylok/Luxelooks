@@ -226,7 +226,12 @@ class Product(BaseModel):
     category: str
     collections: List[str] = []
     tags: List[str] = []
+
+    # Images
     images: List[str] = []
+    primaryImage: Optional[str] = None   # default storefront image
+    modelImage: Optional[str] = None     # hover "on model" image
+
     variants: List[ProductVariant] = []
     status: str = "active"
     isFeatured: bool = False
@@ -249,7 +254,6 @@ class Product(BaseModel):
     totalPurchases: int = 0
     createdAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updatedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 
 class CartItem(BaseModel):
     productId: str
@@ -431,24 +435,138 @@ async def get_product(product_id: str):
 
 
 @api_router.post("/products")
-async def create_product(product: Product, session: Dict[str, Any] = Depends(require_admin)):
+async def create_product(
+    product: Product,
+    session: Dict[str, Any] = Depends(require_admin),
+):
     product_dict = product.dict()
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Normalize arrays
+    product_dict["images"] = product_dict.get("images") or []
+    product_dict["tags"] = product_dict.get("tags") or []
+    product_dict["collections"] = product_dict.get("collections") or []
+    product_dict["relatedProductIds"] = product_dict.get("relatedProductIds") or []
+    product_dict["bundleProductIds"] = product_dict.get("bundleProductIds") or []
+
+    # Normalize image role fields
+    primary_image = (product_dict.get("primaryImage") or "").strip()
+    model_image = (product_dict.get("modelImage") or "").strip()
+
+    if primary_image and primary_image not in product_dict["images"]:
+        primary_image = ""
+    if model_image and model_image not in product_dict["images"]:
+        model_image = ""
+
+    # If no primary image chosen, default to first image if available
+    if not primary_image and product_dict["images"]:
+        primary_image = product_dict["images"][0]
+
+    product_dict["primaryImage"] = primary_image or None
+    product_dict["modelImage"] = model_image or None
+
+    # Normalize variants
+    clean_variants = []
+    for v in (product_dict.get("variants") or []):
+        sku = str(v.get("sku") or "").strip()
+        if not sku:
+            raise HTTPException(status_code=400, detail="Each variant must have an SKU")
+
+        variant_id = str(v.get("id") or "").strip() or str(uuid.uuid4())
+
+        clean_variants.append({
+            "id": variant_id,
+            "size": (v.get("size") or None),
+            "color": (v.get("color") or None),
+            "material": (v.get("material") or None),
+            "stock": int(v.get("stock") or 0),
+            "sku": sku,
+            "priceAdjustment": float(v.get("priceAdjustment") or 0.0),
+        })
+
+    product_dict["variants"] = clean_variants
+
     product_dict["createdAt"] = product_dict.get("createdAt") or now_iso
     product_dict["updatedAt"] = now_iso
-    await db.products.insert_one(product_dict)
-    return product_dict
+
+    result = await db.products.insert_one(product_dict)
+
+    created_product = await db.products.find_one(
+        {"_id": result.inserted_id},
+        {"_id": 0},
+    )
+
+    if not created_product:
+        raise HTTPException(status_code=500, detail="Product created but could not be retrieved")
+
+    return created_product
 
 
 @api_router.put("/products/{product_id}")
-async def update_product(product_id: str, product: Product, session: Dict[str, Any] = Depends(require_admin)):
-    product_dict = product.dict()
-    product_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
-    result = await db.products.update_one({"id": product_id}, {"$set": product_dict})
-    if result.matched_count == 0:
+async def update_product(
+    product_id: str,
+    product: Product,
+    session: Dict[str, Any] = Depends(require_admin),
+):
+    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product_dict
 
+    product_dict = product.dict()
+
+    # Keep original id from path
+    product_dict["id"] = product_id
+
+    # Normalize arrays
+    product_dict["images"] = product_dict.get("images") or []
+    product_dict["tags"] = product_dict.get("tags") or []
+    product_dict["collections"] = product_dict.get("collections") or []
+    product_dict["relatedProductIds"] = product_dict.get("relatedProductIds") or []
+    product_dict["bundleProductIds"] = product_dict.get("bundleProductIds") or []
+
+    # Normalize image role fields
+    primary_image = (product_dict.get("primaryImage") or "").strip()
+    model_image = (product_dict.get("modelImage") or "").strip()
+
+    if primary_image and primary_image not in product_dict["images"]:
+        primary_image = ""
+    if model_image and model_image not in product_dict["images"]:
+        model_image = ""
+
+    # If no primary image chosen, default to first image if available
+    if not primary_image and product_dict["images"]:
+        primary_image = product_dict["images"][0]
+
+    product_dict["primaryImage"] = primary_image or None
+    product_dict["modelImage"] = model_image or None
+
+    # Normalize variants
+    clean_variants = []
+    for v in (product_dict.get("variants") or []):
+        sku = str(v.get("sku") or "").strip()
+        if not sku:
+            raise HTTPException(status_code=400, detail="Each variant must have an SKU")
+
+        variant_id = str(v.get("id") or "").strip() or str(uuid.uuid4())
+
+        clean_variants.append({
+            "id": variant_id,
+            "size": (v.get("size") or None),
+            "color": (v.get("color") or None),
+            "material": (v.get("material") or None),
+            "stock": int(v.get("stock") or 0),
+            "sku": sku,
+            "priceAdjustment": float(v.get("priceAdjustment") or 0.0),
+        })
+
+    product_dict["variants"] = clean_variants
+
+    # Preserve createdAt if frontend sends blank or changed value
+    product_dict["createdAt"] = existing.get("createdAt") or product_dict.get("createdAt")
+    product_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
+
+    await db.products.update_one({"id": product_id}, {"$set": product_dict})
+    return product_dict
 
 @api_router.delete("/products/{product_id}")
 async def delete_product(product_id: str, session: Dict[str, Any] = Depends(require_admin)):
@@ -464,63 +582,11 @@ async def delete_product(product_id: str, session: Dict[str, Any] = Depends(requ
 async def create_order(order: Order):
     order_dict = order.dict()
 
-    # Validate order items
-    items = order_dict.get("items") or []
-    if not items:
+    if not order_dict.get("items"):
         raise HTTPException(status_code=400, detail="Order must contain items")
 
-    # Collect product IDs
-    product_ids = []
-    for item in items:
-        pid = item.get("productId")
-        if not pid:
-            raise HTTPException(status_code=400, detail="Each item must include productId")
-        product_ids.append(ObjectId(pid))
-
-    # Fetch products from database
-    products = await db.products.find(
-        {"_id": {"$in": product_ids}}
-    ).to_list(length=len(product_ids))
-
-    product_map = {str(p["_id"]): p for p in products}
-
-    subtotal = 0
-    sanitized_items = []
-
-    # Recalculate totals using database prices
-    for item in items:
-        pid = item["productId"]
-        qty = int(item.get("quantity", 1))
-
-        if qty < 1:
-            raise HTTPException(status_code=400, detail="Quantity must be >= 1")
-
-        product = product_map.get(pid)
-        if not product:
-            raise HTTPException(status_code=400, detail=f"Invalid productId: {pid}")
-
-        price = float(product.get("price", 0))
-        line_total = price * qty
-        subtotal += line_total
-
-        sanitized_items.append({
-            "productId": pid,
-            "name": product.get("name"),
-            "price": price,
-            "quantity": qty,
-            "lineTotal": line_total
-        })
-
-    # Replace items with sanitized version
-    order_dict["items"] = sanitized_items
-
-    # Recalculate totals server-side
-    order_dict["subtotal"] = subtotal
-    order_dict["discount"] = 0
-    order_dict["shippingCost"] = float(order_dict.get("shippingCost") or 0)
-    order_dict["total"] = order_dict["subtotal"] - order_dict["discount"] + order_dict["shippingCost"]
-
     now_iso = datetime.now(timezone.utc).isoformat()
+
     order_dict["createdAt"] = order_dict.get("createdAt") or now_iso
     order_dict["updatedAt"] = now_iso
 
@@ -529,7 +595,7 @@ async def create_order(order: Order):
 
     result = await db.orders.insert_one(order_dict)
 
-    # Convert ObjectId to string for JSON response
+    # Make response JSON-safe
     order_dict["_id"] = str(result.inserted_id)
 
     return order_dict
