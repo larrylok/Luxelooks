@@ -15,9 +15,20 @@ import storage from "@/utils/storage";
 import analytics from "@/utils/analytics";
 import { toast } from "sonner";
 
-// ✅ safe in prod even if env is missing
-const API_BASE = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/$/, "");
-const API = `${API_BASE}/api`; // if API_BASE is "", becomes "/api" (same-origin)
+// Use the same env variable as the rest of production
+const API_BASE = (process.env.REACT_APP_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API = `${API_BASE}/api`;
+
+function getProductId(product) {
+  return product?.id || product?._id || "";
+}
+
+function absolutizeImage(url) {
+  const u = String(url || "");
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  return `${API_BASE}${u}`;
+}
 
 export default function ProductDetail() {
   const { slug } = useParams();
@@ -47,7 +58,7 @@ export default function ProductDetail() {
 
   const loadWishlist = async () => {
     const wl = (await storage.get("wishlist")) || [];
-    setWishlist(wl);
+    setWishlist(Array.isArray(wl) ? wl : []);
   };
 
   const loadApprovedReviews = async (productId) => {
@@ -56,13 +67,11 @@ export default function ProductDetail() {
         params: { productId, status: "approved" },
       });
 
-      // supports either: { reviews: [...] } or just [...]
       const data = reviewsResponse.data?.reviews ?? reviewsResponse.data ?? [];
       setReviews(Array.isArray(data) ? data : []);
     } catch (err) {
       const status = err?.response?.status;
 
-      // ✅ If backend protects reviews, treat as "no public reviews"
       if (status === 401 || status === 403) {
         setReviews([]);
         return;
@@ -70,15 +79,12 @@ export default function ProductDetail() {
 
       console.error("Error loading reviews:", err);
       setReviews([]);
-      // optional toast (I recommend no toast here)
-      // toast.error("Failed to load reviews");
     }
   };
 
   const loadProductAndReviews = async () => {
     setLoading(true);
     try {
-      // Get all products and find by slug (since backend doesn't have slug search)
       const response = await axios.get(`${API}/products`, {
         params: { limit: 100 },
       });
@@ -92,22 +98,22 @@ export default function ProductDetail() {
         return;
       }
 
+      const productId = getProductId(prod);
+
       setProduct(prod);
       setSelectedVariant(prod?.variants?.[0] || null);
       setSelectedImage(0);
 
-      // Track view
-      analytics.productView(prod.id, prod.name);
+      analytics.productView(productId, prod.name);
 
-      // Add to recently viewed
       let rv = (await storage.get("recently_viewed")) || [];
-      rv = rv.filter((id) => id !== prod.id);
-      rv.unshift(prod.id);
+      rv = Array.isArray(rv) ? rv : [];
+      rv = rv.filter((id) => id !== productId);
+      rv.unshift(productId);
       rv = rv.slice(0, 10);
       await storage.set("recently_viewed", rv);
 
-      // ✅ Load reviews separately (will NOT break product load)
-      await loadApprovedReviews(prod.id);
+      await loadApprovedReviews(productId);
     } catch (error) {
       console.error("Error loading product:", error);
       toast.error("Failed to load product");
@@ -119,15 +125,16 @@ export default function ProductDetail() {
   const toggleWishlist = async () => {
     if (!product) return;
 
+    const productId = getProductId(product);
     let newWishlist = [...wishlist];
-    const index = newWishlist.indexOf(product.id);
+    const index = newWishlist.indexOf(productId);
 
     if (index > -1) {
       newWishlist.splice(index, 1);
       toast.success("Removed from wishlist");
     } else {
-      newWishlist.push(product.id);
-      analytics.addToWishlist(product.id, product.name);
+      newWishlist.push(productId);
+      analytics.addToWishlist(productId, product.name);
       toast.success("Added to wishlist");
     }
 
@@ -147,6 +154,8 @@ export default function ProductDetail() {
       return;
     }
 
+    const productId = getProductId(product);
+
     const cart = (await storage.get("cart")) || {
       items: [],
       subtotal: 0,
@@ -155,7 +164,7 @@ export default function ProductDetail() {
 
     const existingItemIndex = cart.items.findIndex(
       (item) =>
-        item.productId === product.id && item.variantId === selectedVariant.id
+        item.productId === productId && item.variantId === selectedVariant.id
     );
 
     if (existingItemIndex > -1) {
@@ -167,9 +176,9 @@ export default function ProductDetail() {
       }
     } else {
       cart.items.push({
-        productId: product.id,
+        productId,
         variantId: selectedVariant.id,
-        quantity: quantity,
+        quantity,
         giftWrap: giftOptions.giftWrap,
         giftMessage: giftOptions.giftMessage,
         giftReceipt: giftOptions.giftReceipt,
@@ -180,7 +189,7 @@ export default function ProductDetail() {
     await storage.set("cart", cart);
     window.dispatchEvent(new Event("storage-update"));
     analytics.addToCart(
-      product.id,
+      productId,
       product.name,
       selectedVariant,
       quantity,
@@ -199,6 +208,7 @@ export default function ProductDetail() {
 
   if (!product) return null;
 
+  const productId = getProductId(product);
   const price = product.salePrice || product.basePrice;
   const finalPrice = price + (selectedVariant?.priceAdjustment || 0);
   const isInStock = selectedVariant && selectedVariant.stock > 0;
@@ -206,7 +216,6 @@ export default function ProductDetail() {
 
   return (
     <div className="min-h-screen">
-      {/* Breadcrumbs */}
       <div className="container mx-auto px-6 md:px-12 lg:px-24 max-w-[1600px] py-8">
         <button
           onClick={() => navigate(-1)}
@@ -218,14 +227,12 @@ export default function ProductDetail() {
         </button>
       </div>
 
-      {/* Product */}
       <section className="container mx-auto px-6 md:px-12 lg:px-24 max-w-[1600px] pb-24">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          {/* Images */}
           <div>
             <div className="relative mb-4 border-2 border-gold/20 overflow-hidden">
               <img
-                src={product.images?.[selectedImage]}
+                src={absolutizeImage(product.images?.[selectedImage])}
                 alt={product.name}
                 className="w-full h-[600px] object-cover"
                 data-testid="product-main-image"
@@ -251,7 +258,7 @@ export default function ProductDetail() {
                     data-testid={`product-thumbnail-${idx}`}
                   >
                     <img
-                      src={img}
+                      src={absolutizeImage(img)}
                       alt={`${product.name} ${idx + 1}`}
                       className="w-full h-24 object-cover"
                     />
@@ -261,7 +268,6 @@ export default function ProductDetail() {
             )}
           </div>
 
-          {/* Info */}
           <div>
             <div className="mb-6">
               <span className="text-xs tracking-widest uppercase text-graphite">
@@ -274,7 +280,6 @@ export default function ProductDetail() {
                 {product.name}
               </h1>
 
-              {/* Rating */}
               {product.averageRating > 0 && (
                 <div className="flex items-center space-x-2 mb-4">
                   <div className="flex">
@@ -296,7 +301,6 @@ export default function ProductDetail() {
                 </div>
               )}
 
-              {/* Price */}
               <div className="mb-6">
                 {product.salePrice ? (
                   <div className="flex items-center space-x-3">
@@ -322,7 +326,6 @@ export default function ProductDetail() {
               </p>
             </div>
 
-            {/* Variants */}
             {Array.isArray(product.variants) && product.variants.length > 0 && (
               <div className="mb-8 pb-8 border-b border-gold/20">
                 <h3 className="text-sm font-bold tracking-widest uppercase text-charcoal mb-4">
@@ -368,7 +371,6 @@ export default function ProductDetail() {
               </div>
             )}
 
-            {/* Quantity */}
             <div className="mb-8 pb-8 border-b border-gold/20">
               <h3 className="text-sm font-bold tracking-widest uppercase text-charcoal mb-4">
                 Quantity
@@ -394,7 +396,6 @@ export default function ProductDetail() {
               </div>
             </div>
 
-            {/* Gift Options */}
             {product.giftWrapAvailable && (
               <div className="mb-8 pb-8 border-b border-gold/20">
                 <h3 className="text-sm font-bold tracking-widest uppercase text-charcoal mb-4">
@@ -460,7 +461,6 @@ export default function ProductDetail() {
               </div>
             )}
 
-            {/* Actions */}
             <div className="flex space-x-4 mb-8">
               <button
                 onClick={addToCart}
@@ -485,7 +485,7 @@ export default function ProductDetail() {
               >
                 <Heart
                   size={20}
-                  fill={wishlist.includes(product.id) ? "currentColor" : "none"}
+                  fill={wishlist.includes(productId) ? "currentColor" : "none"}
                 />
               </button>
 
@@ -501,7 +501,6 @@ export default function ProductDetail() {
               </button>
             </div>
 
-            {/* Info cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 border border-gold/20 text-center">
                 <Truck size={24} className="mx-auto text-gold mb-2" />
@@ -534,7 +533,6 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {/* Details */}
         <div className="mt-24">
           <div className="border-b border-gold/20 mb-8">
             <button className="pb-4 border-b-2 border-gold text-sm font-bold tracking-widest uppercase">

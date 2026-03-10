@@ -6,8 +6,19 @@ import storage from "@/utils/storage";
 import analytics from "@/utils/analytics";
 import { toast } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+const API_BASE = (process.env.REACT_APP_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API = `${API_BASE}/api`;
+
+function getProductId(product) {
+  return product?.id || product?._id || "";
+}
+
+function absolutizeImage(url) {
+  const u = String(url || "");
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://")) return u;
+  return `${API_BASE}${u}`;
+}
 
 export default function Wishlist() {
   const [wishlist, setWishlist] = useState([]);
@@ -24,23 +35,27 @@ export default function Wishlist() {
   const loadWishlist = async () => {
     setLoading(true);
     const wishlistIds = (await storage.get("wishlist")) || [];
-    setWishlist(wishlistIds);
+    const safeWishlistIds = Array.isArray(wishlistIds) ? wishlistIds : [];
+    setWishlist(safeWishlistIds);
 
-    if (wishlistIds.length > 0) {
+    if (safeWishlistIds.length > 0) {
       try {
-        // Load all products and filter
         const response = await axios.get(`${API}/products`, {
           params: { limit: 100 },
         });
 
-        const wishlistProducts = response.data.products.filter((p) =>
-          wishlistIds.includes(p.id)
+        const allProducts = response.data?.products || [];
+        const wishlistProducts = allProducts.filter((p) =>
+          safeWishlistIds.includes(getProductId(p))
         );
+
         setProducts(wishlistProducts);
       } catch (error) {
         console.error("Error loading wishlist products:", error);
         toast.error("Failed to load wishlist");
       }
+    } else {
+      setProducts([]);
     }
 
     setLoading(false);
@@ -49,7 +64,7 @@ export default function Wishlist() {
   const removeFromWishlist = async (productId) => {
     const newWishlist = wishlist.filter((id) => id !== productId);
     setWishlist(newWishlist);
-    setProducts(products.filter((p) => p.id !== productId));
+    setProducts(products.filter((p) => getProductId(p) !== productId));
     await storage.set("wishlist", newWishlist);
     window.dispatchEvent(new Event("storage-update"));
     toast.success("Removed from wishlist");
@@ -62,6 +77,7 @@ export default function Wishlist() {
     }
 
     const defaultVariant = product.variants[0];
+    const productId = getProductId(product);
 
     if (defaultVariant.stock <= 0 && !product.allowPreorder) {
       toast.error("Product is out of stock");
@@ -76,14 +92,14 @@ export default function Wishlist() {
 
     const existingItemIndex = cart.items.findIndex(
       (item) =>
-        item.productId === product.id && item.variantId === defaultVariant.id
+        item.productId === productId && item.variantId === defaultVariant.id
     );
 
     if (existingItemIndex > -1) {
       cart.items[existingItemIndex].quantity += 1;
     } else {
       cart.items.push({
-        productId: product.id,
+        productId,
         variantId: defaultVariant.id,
         quantity: 1,
         giftWrap: false,
@@ -96,7 +112,7 @@ export default function Wishlist() {
     await storage.set("cart", cart);
     window.dispatchEvent(new Event("storage-update"));
     analytics.addToCart(
-      product.id,
+      productId,
       product.name,
       defaultVariant,
       1,
@@ -106,13 +122,11 @@ export default function Wishlist() {
   };
 
   const handleShare = () => {
-    // Create shareable wishlist data
     const wishlistData = {
       items: wishlist,
       timestamp: new Date().toISOString(),
     };
 
-    // Encode wishlist data
     const encodedData = btoa(JSON.stringify(wishlistData));
     const url = `${window.location.origin}/wishlist?shared=${encodedData}`;
 
@@ -176,106 +190,107 @@ export default function Wishlist() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-            {products.map((product) => (
-              <div
-                key={product.id}
-                className="product-card bg-card border border-gold/20 hover:border-gold transition-all duration-300 group"
-                data-testid={`wishlist-product-${product.id}`}
-              >
-                <div className="relative overflow-hidden">
-                  <Link to={`/products/${product.slug}`}>
-                    <img
-                      src={product.images[0]}
-                      alt={product.name}
-                      className="w-full h-80 object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                  </Link>
+            {products.map((product) => {
+              const productId = getProductId(product);
 
-                  {/* Badges */}
-                  <div className="absolute top-4 left-4 flex flex-col gap-2">
-                    {product.isBestseller && (
-                      <span className="px-3 py-1 bg-gold text-white text-xs tracking-widest uppercase font-bold">
-                        Bestseller
-                      </span>
-                    )}
-                    {product.discountPercentage && (
-                      <span className="px-3 py-1 bg-destructive text-white text-xs tracking-widest uppercase font-bold">
-                        -{Math.round(product.discountPercentage)}%
-                      </span>
-                    )}
-                  </div>
+              return (
+                <div
+                  key={productId}
+                  className="product-card bg-card border border-gold/20 hover:border-gold transition-all duration-300 group"
+                  data-testid={`wishlist-product-${productId}`}
+                >
+                  <div className="relative overflow-hidden">
+                    <Link to={`/products/${product.slug}`}>
+                      <img
+                        src={absolutizeImage(product.images?.[0])}
+                        alt={product.name}
+                        className="w-full h-80 object-cover group-hover:scale-105 transition-transform duration-500"
+                      />
+                    </Link>
 
-                  {/* Remove button */}
-                  <button
-                    onClick={() => removeFromWishlist(product.id)}
-                    className="absolute top-4 right-4 w-10 h-10 bg-pearl border border-gold flex items-center justify-center hover:bg-destructive hover:text-white hover:border-destructive transition-colors opacity-0 group-hover:opacity-100"
-                    data-testid={`remove-wishlist-${product.id}`}
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-
-                <div className="p-6">
-                  <div className="mb-3">
-                    <span className="text-xs tracking-widest uppercase text-graphite">
-                      {product.category}
-                    </span>
-                  </div>
-
-                  <Link to={`/products/${product.slug}`}>
-                    <h3 className="font-serif text-xl text-charcoal mb-2 hover:text-gold transition-colors">
-                      {product.name}
-                    </h3>
-                  </Link>
-
-                  <p className="text-sm text-graphite mb-4 line-clamp-2">
-                    {product.shortDescription}
-                  </p>
-
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      {product.salePrice ? (
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xl font-light text-gold">
-                            KES {product.salePrice.toLocaleString()}
-                          </span>
-                          <span className="text-sm text-graphite line-through">
-                            KES {product.basePrice.toLocaleString()}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-xl font-light text-charcoal">
-                          KES {product.basePrice.toLocaleString()}
+                    <div className="absolute top-4 left-4 flex flex-col gap-2">
+                      {product.isBestseller && (
+                        <span className="px-3 py-1 bg-gold text-white text-xs tracking-widest uppercase font-bold">
+                          Bestseller
+                        </span>
+                      )}
+                      {product.discountPercentage && (
+                        <span className="px-3 py-1 bg-destructive text-white text-xs tracking-widest uppercase font-bold">
+                          -{Math.round(product.discountPercentage)}%
                         </span>
                       )}
                     </div>
 
-                    {product.averageRating > 0 && (
-                      <div className="flex items-center space-x-1">
-                        <span className="text-gold">★</span>
-                        <span className="text-sm font-bold">
-                          {product.averageRating}
-                        </span>
-                      </div>
-                    )}
+                    <button
+                      onClick={() => removeFromWishlist(productId)}
+                      className="absolute top-4 right-4 w-10 h-10 bg-pearl border border-gold flex items-center justify-center hover:bg-destructive hover:text-white hover:border-destructive transition-colors opacity-0 group-hover:opacity-100"
+                      data-testid={`remove-wishlist-${productId}`}
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
 
-                  <button
-                    onClick={() => addToCart(product)}
-                    className="w-full py-3 bg-transparent border border-gold text-charcoal hover:bg-charcoal hover:text-gold transition-all duration-300 text-xs tracking-widest uppercase font-bold flex items-center justify-center space-x-2"
-                    data-testid={`add-to-cart-${product.id}`}
-                  >
-                    <ShoppingCart size={16} />
-                    <span>Add to Cart</span>
-                  </button>
+                  <div className="p-6">
+                    <div className="mb-3">
+                      <span className="text-xs tracking-widest uppercase text-graphite">
+                        {product.category}
+                      </span>
+                    </div>
+
+                    <Link to={`/products/${product.slug}`}>
+                      <h3 className="font-serif text-xl text-charcoal mb-2 hover:text-gold transition-colors">
+                        {product.name}
+                      </h3>
+                    </Link>
+
+                    <p className="text-sm text-graphite mb-4 line-clamp-2">
+                      {product.shortDescription}
+                    </p>
+
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        {product.salePrice ? (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xl font-light text-gold">
+                              KES {product.salePrice.toLocaleString()}
+                            </span>
+                            <span className="text-sm text-graphite line-through">
+                              KES {product.basePrice.toLocaleString()}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xl font-light text-charcoal">
+                            KES {product.basePrice.toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+
+                      {product.averageRating > 0 && (
+                        <div className="flex items-center space-x-1">
+                          <span className="text-gold">★</span>
+                          <span className="text-sm font-bold">
+                            {product.averageRating}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => addToCart(product)}
+                      className="w-full py-3 bg-transparent border border-gold text-charcoal hover:bg-charcoal hover:text-gold transition-all duration-300 text-xs tracking-widest uppercase font-bold flex items-center justify-center space-x-2"
+                      data-testid={`add-to-cart-${productId}`}
+                    >
+                      <ShoppingCart size={16} />
+                      <span>Add to Cart</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Share Modal */}
       {shareModalOpen && (
         <>
           <div
