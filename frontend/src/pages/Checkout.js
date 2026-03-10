@@ -13,7 +13,7 @@ import storage from "@/utils/storage";
 import analytics from "@/utils/analytics";
 import { toast } from "sonner";
 
-import api from "@/api"; // ✅ shared axios client (baseURL already includes /api)
+import api from "@/api"; // shared axios client (baseURL already includes /api)
 
 // ---- helpers ----
 function buildOrderNumber() {
@@ -98,7 +98,7 @@ export default function Checkout() {
 
     if (!cartData || !Array.isArray(cartData.items) || cartData.items.length === 0) {
       toast.error("Your cart is empty");
-      setLoading(false); // ✅ avoid spinner hang
+      setLoading(false);
       navigate("/");
       return;
     }
@@ -128,7 +128,7 @@ export default function Checkout() {
     }
   };
 
-  const calculateCartTotals = () => {
+  const totals = useMemo(() => {
     let subtotal = 0;
     let giftWrapTotal = 0;
 
@@ -154,9 +154,7 @@ export default function Checkout() {
     const total = subtotal + giftWrapTotal + shippingCost;
 
     return { subtotal, giftWrapTotal, shippingCost, total };
-  };
-
-  const totals = useMemo(() => calculateCartTotals(), [cart, products, deliveryInfo]);
+  }, [cart, products, deliveryInfo]);
 
   const handleCustomerInfoSubmit = (e) => {
     e.preventDefault();
@@ -209,7 +207,6 @@ export default function Checkout() {
           statusHistory: [
             {
               status: "pending",
-              // keep BOTH keys so TrackOrder works no matter what
               at: nowIso,
               timestamp: nowIso,
               note: "Order placed",
@@ -220,7 +217,6 @@ export default function Checkout() {
         const response = await api.post(`/orders`, orderData);
         setOrder(response.data);
 
-        // backup for guest checkout
         try {
           await storage.set("lastOrder", {
             orderNumber: response.data?.orderNumber || orderNumber,
@@ -231,15 +227,12 @@ export default function Checkout() {
           console.warn("Failed to store lastOrder", e);
         }
 
-        // Track purchase
         try {
           analytics.purchase(response.data?.id, totals.total, safeArr(cart?.items));
         } catch (e) {
-          // non-blocking
           console.warn("analytics.purchase failed:", e);
         }
 
-        // Clear cart
         await storage.set("cart", { items: [], subtotal: 0, total: 0 });
         window.dispatchEvent(new Event("storage-update"));
 
@@ -303,7 +296,6 @@ export default function Checkout() {
           Checkout
         </h1>
 
-        {/* Progress indicator */}
         <div className="flex items-center justify-center mb-12">
           <div className="flex items-center space-x-4">
             <div
@@ -333,9 +325,7 @@ export default function Checkout() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
-          {/* Main content */}
           <div className="lg:col-span-2">
-            {/* Step 1 */}
             {step === 1 && (
               <form onSubmit={handleCustomerInfoSubmit}>
                 <div className="bg-card border-2 border-gold/20 p-8 mb-8">
@@ -513,7 +503,6 @@ export default function Checkout() {
               </form>
             )}
 
-            {/* Step 2 */}
             {step === 2 && (
               <div>
                 <div className="bg-card border-2 border-gold/20 p-8 mb-8">
@@ -570,8 +559,8 @@ export default function Checkout() {
                         <p className="text-xs text-midnight flex items-start space-x-2">
                           <AlertCircle size={16} className="flex-shrink-0 mt-0.5" />
                           <span>
-                            <strong>Demo Mode:</strong> This is a mock M-Pesa integration for testing.
-                            In production, you’ll need Safaricom API credentials.
+                            <strong>Demo Mode:</strong> This is a mock M-Pesa integration for
+                            testing. In production, you’ll need Safaricom API credentials.
                           </span>
                         </p>
                       </div>
@@ -607,7 +596,6 @@ export default function Checkout() {
               </div>
             )}
 
-            {/* Step 3 */}
             {step === 3 && order && (
               <div className="bg-card border-2 border-gold/20 p-8">
                 <div className="text-center">
@@ -717,12 +705,9 @@ export default function Checkout() {
             )}
           </div>
 
-          {/* Order Summary */}
           <div>
             <div className="bg-card border-2 border-gold/20 p-8 sticky top-24">
-              <h2 className="font-serif text-2xl text-charcoal mb-6">
-                Order Summary
-              </h2>
+              <h2 className="font-serif text-2xl text-charcoal mb-6">Order Summary</h2>
 
               <div className="space-y-4 mb-6">
                 {safeArr(cart?.items).map((item, idx) => {
@@ -757,8 +742,7 @@ export default function Checkout() {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold">
-                          KES{" "}
-                          {(itemPrice * safeNum(item.quantity || 0, 0)).toLocaleString()}
+                          KES {(itemPrice * safeNum(item.quantity || 0, 0)).toLocaleString()}
                         </p>
                       </div>
                     </div>
