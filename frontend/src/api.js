@@ -1,15 +1,15 @@
 import axios from "axios";
 
 function getBackendUrl() {
-  // Prefer env, fallback to same-origin (works after deployment)
-  const env = process.env.REACT_APP_BACKEND_URL;
+  // Use the Vercel environment variable first
+  const env = process.env.REACT_APP_API_URL;
 
   if (env && typeof env === "string" && env.trim() && env !== "undefined") {
-    return env.replace(/\/+$/, ""); // remove trailing slashes
+    return env.replace(/\/+$/, "");
   }
 
-  // same-origin fallback (frontend and backend served together / proxied)
-  return "";
+  // Local development fallback
+  return "http://127.0.0.1:8000";
 }
 
 const TOKEN_KEY = "admin_token";
@@ -37,7 +37,6 @@ function migrateAdminToken() {
 }
 
 export function getAdminToken() {
-  // Always read from the canonical key after migration
   return migrateAdminToken() || "";
 }
 
@@ -46,7 +45,6 @@ export function setAdminToken(token) {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
 
-    // Clean legacy keys to prevent split-brain auth
     localStorage.removeItem("adminToken");
     localStorage.removeItem("token");
   } catch {
@@ -63,7 +61,6 @@ const api = axios.create({
   withCredentials: false,
 });
 
-// Attach token automatically to every request
 api.interceptors.request.use(
   (config) => {
     const token = getAdminToken();
@@ -81,7 +78,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Global auth failure handling: on 401 clear token and bounce to login
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -90,7 +86,6 @@ api.interceptors.response.use(
     if (status === 401) {
       clearAdminToken();
 
-      // Avoid redirect loops if already on login
       if (
         window.location.pathname.startsWith("/admin") &&
         !window.location.pathname.startsWith("/admin/login")
@@ -104,4 +99,3 @@ api.interceptors.response.use(
 );
 
 export default api;
-
