@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pathlib import Path
+from cloudinary.utils import cloudinary_url
 from fastapi.staticfiles import StaticFiles
 from fastapi import HTTPException, Query, Depends
 from pydantic import BaseModel, Field
@@ -1064,12 +1065,47 @@ async def admin_upload_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {str(e)}")
 
+    public_id = upload_result.get("public_id")
     secure_url = upload_result.get("secure_url")
-    if not secure_url:
+
+    if not public_id or not secure_url:
         raise HTTPException(status_code=500, detail="Upload succeeded but no image URL was returned")
 
-    return {"url": secure_url}
+    # Optimized delivery URLs
+    thumb_url, _ = cloudinary_url(
+        public_id,
+        secure=True,
+        transformation=[
+            {"width": 400, "height": 400, "crop": "fill", "gravity": "auto"},
+            {"fetch_format": "auto", "quality": "auto"},
+        ],
+    )
 
+    medium_url, _ = cloudinary_url(
+        public_id,
+        secure=True,
+        transformation=[
+            {"width": 800, "height": 1000, "crop": "fill", "gravity": "auto"},
+            {"fetch_format": "auto", "quality": "auto"},
+        ],
+    )
+
+    large_url, _ = cloudinary_url(
+        public_id,
+        secure=True,
+        transformation=[
+            {"width": 1400, "height": 1400, "crop": "limit"},
+            {"fetch_format": "auto", "quality": "auto"},
+        ],
+    )
+
+    return {
+        "url": secure_url,          # original uploaded image
+        "thumbnailUrl": thumb_url,  # small square
+        "mediumUrl": medium_url,    # product card / model image
+        "largeUrl": large_url,      # product detail image
+        "publicId": public_id,
+    }
 
 # ==================== WIRE-UP / MIDDLEWARE ====================
 
