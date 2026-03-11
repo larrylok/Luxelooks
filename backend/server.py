@@ -21,6 +21,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 import os
 import logging
+import cloudinary
+import cloudinary.uploader
 import uuid
 import hashlib
 import re
@@ -35,12 +37,14 @@ load_dotenv(ROOT_DIR / ".env")
 UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", str(ROOT_DIR / "uploads")))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+cloudinary.config(secure=True)
 
 def _safe_filename(name: str) -> str:
     # Keep only final file component, sanitize, keep reasonable length
     name = (name or "image").strip().replace("\\", "/").split("/")[-1]
     name = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
     return name[:120] if name else "image"
+
 
 
 # ==================== SECURITY HELPERS ====================
@@ -1046,23 +1050,25 @@ async def admin_upload_image(
     if len(data) > 8 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Image too large (max 8MB)")
 
-    ext_map = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-    }
-
-    ext = ext_map[file.content_type]
     original = _safe_filename(file.filename or "image")
     base = os.path.splitext(original)[0] or "image"
-    filename = f"{base}_{uuid.uuid4().hex}{ext}"
-    filepath = str(UPLOAD_DIR / filename)
 
-    with open(filepath, "wb") as f:
-        f.write(data)
+    try:
+        upload_result = cloudinary.uploader.upload(
+            data,
+            folder="luxelooks",
+            public_id=f"{base}_{uuid.uuid4().hex}",
+            resource_type="image",
+            overwrite=False,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cloudinary upload failed: {str(e)}")
 
-    return {"url": f"/uploads/{filename}"}
+    secure_url = upload_result.get("secure_url")
+    if not secure_url:
+        raise HTTPException(status_code=500, detail="Upload succeeded but no image URL was returned")
+
+    return {"url": secure_url}
 
 
 # ==================== WIRE-UP / MIDDLEWARE ====================
