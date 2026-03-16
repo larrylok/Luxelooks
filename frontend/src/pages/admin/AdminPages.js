@@ -107,8 +107,8 @@ export default function AdminPages() {
 
     try {
       const [pagesRes, categoriesRes] = await Promise.all([
-        api.get(`/pages`),
-        api.get(`/categories`),
+        api.get("/pages"),
+        api.get("/categories"),
       ]);
 
       if (seq !== requestSeq.current) return;

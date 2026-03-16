@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, useLocation, useSearchParams, Link } from "react-router-dom";
 import { Heart, ShoppingCart, Eye, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
@@ -48,8 +48,6 @@ export default function StorefrontPage() {
   const { slug } = useParams();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-
-  const productsRef = useRef(null);
 
   const isCategoryRoute = location.pathname.startsWith("/categories/");
   const [loading, setLoading] = useState(true);
@@ -231,25 +229,19 @@ export default function StorefrontPage() {
   }, [products, filters]);
 
   const titleText = safeStr(pageData?.name) || (isCategoryRoute ? "Category" : "Collection");
-
   const descriptionText =
     safeStr(pageData?.description) ||
     "Discover our curated collection of luxury Art Deco pieces.";
 
   return (
     <div className="min-h-screen">
-      <section
-        ref={productsRef}
-        className="container mx-auto px-6 md:px-12 lg:px-24 max-w-[1600px] py-16"
-      >
+      <section className="container mx-auto px-6 md:px-12 lg:px-24 max-w-[1600px] py-16">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-12 pb-6 border-b border-gold/20">
           <div>
             <h1 className="font-serif text-3xl md:text-4xl tracking-tight text-charcoal">
               {titleText}
             </h1>
-            <p className="text-sm text-graphite mt-2 max-w-2xl">
-              {descriptionText}
-            </p>
+            <p className="text-sm text-graphite mt-2 max-w-2xl">{descriptionText}</p>
             <p className="text-sm text-graphite mt-2">
               {filteredProducts.length} product{filteredProducts.length === 1 ? "" : "s"} available
             </p>

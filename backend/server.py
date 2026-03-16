@@ -138,25 +138,46 @@ async def _resolve_page_products(page_doc: Dict[str, Any], limit: int = 100) -> 
         product_ids = [str(x).strip() for x in (page_doc.get("productIds") or []) if str(x).strip()]
         if not product_ids:
             return []
+
         products = await db.products.find(
             {"id": {"$in": product_ids}, "status": "active"},
             {"_id": 0},
         ).to_list(limit)
+
         order_map = {pid: i for i, pid in enumerate(product_ids)}
         products.sort(key=lambda p: order_map.get(p.get("id"), 10**9))
         return products
 
     if page_type == "category":
         category_slug = str(page_doc.get("categorySlug") or "").strip()
-        category_doc = await _get_active_category_by_slug(category_slug)
-        if not category_doc:
+        if not category_slug:
             return []
 
-        category_name = str(category_doc.get("name") or "").strip()
-        return await db.products.find(
-            {"category": category_name, "status": "active"},
+        category_doc = await _get_active_category_by_slug(category_slug)
+
+        if category_doc:
+            category_name = str(category_doc.get("name") or "").strip()
+            return await db.products.find(
+                {"category": category_name, "status": "active"},
+                {"_id": 0},
+            ).sort("createdAt", -1).to_list(limit)
+
+        # fallback if category record is missing but products still exist
+        all_products = await db.products.find(
+            {"status": "active"},
             {"_id": 0},
-        ).sort("createdAt", -1).to_list(limit)
+        ).to_list(1000)
+
+        matched = []
+        for product in all_products:
+            product_category = str(product.get("category") or "").strip()
+            if not product_category:
+                continue
+            if _slugify_text(product_category) == category_slug:
+                matched.append(product)
+
+        matched.sort(key=lambda p: str(p.get("createdAt") or ""), reverse=True)
+        return matched[:limit]
 
     if page_type == "featured":
         return await db.products.find(
@@ -183,7 +204,6 @@ async def _resolve_page_products(page_doc: Dict[str, Any], limit: int = 100) -> 
         ).sort("createdAt", -1).to_list(limit)
 
     return []
-
 
 # ==================== DB ====================
 
@@ -1038,7 +1058,7 @@ async def create_storefront_page(page: StorefrontPage, session: Dict[str, Any] =
     page_dict = page.dict()
     page_dict["name"] = str(page_dict.get("name") or "").strip()
     page_dict["slug"] = _slugify_text(page_dict.get("slug") or page_dict["name"])
-    page_dict["productIds"] = page_dict.get("productIds") or []
+    page_dict["type"] = str(page_dict.get("type") or "manual").strip().lower()
     page_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
     if not page_dict["name"]:
@@ -1050,12 +1070,21 @@ async def create_storefront_page(page: StorefrontPage, session: Dict[str, Any] =
     if existing:
         raise HTTPException(status_code=400, detail="Page slug already exists")
 
-    if page_dict.get("type") == "category" and not str(page_dict.get("categorySlug") or "").strip():
-        raise HTTPException(status_code=400, detail="Category page must have categorySlug")
+    # normalize type-specific fields
+    if page_dict["type"] == "category":
+        page_dict["categorySlug"] = str(page_dict.get("categorySlug") or "").strip()
+        page_dict["productIds"] = []
+        if not page_dict["categorySlug"]:
+            raise HTTPException(status_code=400, detail="Category page must have categorySlug")
+    elif page_dict["type"] == "manual":
+        page_dict["productIds"] = [str(x).strip() for x in (page_dict.get("productIds") or []) if str(x).strip()]
+        page_dict["categorySlug"] = None
+    else:
+        page_dict["productIds"] = []
+        page_dict["categorySlug"] = None
 
     await db.pages.insert_one(page_dict)
     return page_dict
-
 
 @api_router.put("/pages/{page_id}")
 async def update_storefront_page(page_id: str, page: StorefrontPage, session: Dict[str, Any] = Depends(require_admin)):
@@ -1067,7 +1096,7 @@ async def update_storefront_page(page_id: str, page: StorefrontPage, session: Di
     page_dict["id"] = page_id
     page_dict["name"] = str(page_dict.get("name") or "").strip()
     page_dict["slug"] = _slugify_text(page_dict.get("slug") or page_dict["name"])
-    page_dict["productIds"] = page_dict.get("productIds") or []
+    page_dict["type"] = str(page_dict.get("type") or "manual").strip().lower()
     page_dict["createdAt"] = existing.get("createdAt") or page_dict.get("createdAt")
     page_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
@@ -1083,12 +1112,21 @@ async def update_storefront_page(page_id: str, page: StorefrontPage, session: Di
     if dup:
         raise HTTPException(status_code=400, detail="Page slug already exists")
 
-    if page_dict.get("type") == "category" and not str(page_dict.get("categorySlug") or "").strip():
-        raise HTTPException(status_code=400, detail="Category page must have categorySlug")
+    # normalize type-specific fields
+    if page_dict["type"] == "category":
+        page_dict["categorySlug"] = str(page_dict.get("categorySlug") or "").strip()
+        page_dict["productIds"] = []
+        if not page_dict["categorySlug"]:
+            raise HTTPException(status_code=400, detail="Category page must have categorySlug")
+    elif page_dict["type"] == "manual":
+        page_dict["productIds"] = [str(x).strip() for x in (page_dict.get("productIds") or []) if str(x).strip()]
+        page_dict["categorySlug"] = None
+    else:
+        page_dict["productIds"] = []
+        page_dict["categorySlug"] = None
 
     await db.pages.update_one({"id": page_id}, {"$set": page_dict})
     return page_dict
-
 
 @api_router.delete("/pages/{page_id}")
 async def delete_storefront_page(page_id: str, session: Dict[str, Any] = Depends(require_admin)):
