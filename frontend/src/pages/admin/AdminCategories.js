@@ -9,6 +9,7 @@ import {
   StarOff,
   Upload,
   ArrowLeft,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "../../api";
@@ -85,7 +86,7 @@ export default function AdminCategories() {
     setLoading(true);
 
     try {
-      const res = await api.get(`/categories`);
+      const res = await api.get("/categories");
       if (seq !== requestSeq.current) return;
 
       const data = Array.isArray(res.data) ? res.data : res.data?.items || [];
@@ -200,9 +201,8 @@ export default function AdminCategories() {
         await api.post(`/categories`, payload);
         toast.success("Category created");
       }
-      
-      window.dispatchEvent(new Event("storefront-navigation-updated"));
 
+      window.dispatchEvent(new Event("storefront-navigation-updated"));
       closeModal();
       await loadCategories();
     } catch (err) {
@@ -234,10 +234,52 @@ export default function AdminCategories() {
       });
 
       toast.success(!item.featured ? "Marked as featured" : "Unfeatured");
+      window.dispatchEvent(new Event("storefront-navigation-updated"));
       await loadCategories();
     } catch (err) {
       console.error(err);
       toast.error("Failed to update featured status");
+    }
+  };
+
+  const deleteCategory = async (category) => {
+    const item = normalizeCategory(category);
+    if (!item.id) return;
+
+    const ok = window.confirm(`Delete category "${item.name}"?`);
+    if (!ok) return;
+
+    try {
+      await api.delete(`/categories/${item.id}`);
+      toast.success("Category deleted");
+      window.dispatchEvent(new Event("storefront-navigation-updated"));
+      await loadCategories();
+    } catch (err) {
+      console.error(err);
+      const msg =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        "Failed to delete category";
+      toast.error(msg);
+    }
+  };
+
+  const syncCategoriesFromProducts = async () => {
+    try {
+      const res = await api.post("/categories/sync-from-products");
+      const created = Number(res.data?.created || 0);
+      const updated = Number(res.data?.updated || 0);
+
+      toast.success(`Categories synced: ${created} created, ${updated} updated`);
+      window.dispatchEvent(new Event("storefront-navigation-updated"));
+      await loadCategories();
+    } catch (err) {
+      console.error(err);
+      const msg =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        "Failed to sync categories";
+      toast.error(msg);
     }
   };
 
@@ -288,7 +330,7 @@ export default function AdminCategories() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={loadCategories}
             className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
@@ -297,6 +339,14 @@ export default function AdminCategories() {
           >
             <RefreshCw className="w-4 h-4" />
             Refresh
+          </button>
+
+          <button
+            onClick={syncCategoriesFromProducts}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
+            type="button"
+          >
+            Sync from products
           </button>
 
           <button
@@ -327,7 +377,7 @@ export default function AdminCategories() {
           <p className="text-graphite">Loading…</p>
         ) : filtered.length === 0 ? (
           <div className="border border-gold/20 p-4 text-graphite">
-            No categories found. Create one to start organizing your storefront.
+            No categories found. Click <b>Sync from products</b> or create one manually.
           </div>
         ) : (
           <div className="space-y-3">
@@ -381,7 +431,7 @@ export default function AdminCategories() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
                   <button
                     onClick={() => toggleFeatured(c)}
                     className="inline-flex items-center gap-2 px-3 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
@@ -398,6 +448,15 @@ export default function AdminCategories() {
                     type="button"
                   >
                     Edit
+                  </button>
+
+                  <button
+                    onClick={() => deleteCategory(c)}
+                    className="inline-flex items-center gap-2 px-3 py-2 border border-red-300 text-red-700 hover:bg-red-50 transition-all duration-300 text-xs tracking-widest uppercase font-bold"
+                    type="button"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Delete
                   </button>
                 </div>
               </div>
@@ -643,7 +702,7 @@ export default function AdminCategories() {
                 </div>
 
                 <p className="text-[11px] text-graphite mt-4">
-                  Tip: Click outside, press ESC, or use Back/Cancel to close without saving.
+                  Tip: Click <b>Sync from products</b> if categories appear on the navbar but not here yet.
                 </p>
               </div>
             </div>
