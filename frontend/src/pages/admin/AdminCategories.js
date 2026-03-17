@@ -7,7 +7,6 @@ import {
   RefreshCw,
   Star,
   StarOff,
-  Upload,
   ArrowLeft,
   Trash2,
 } from "lucide-react";
@@ -35,7 +34,6 @@ function newEmptyDraft() {
     name: "",
     slug: "",
     description: "",
-    heroImage: "",
     displayOrder: 0,
     featured: false,
     active: true,
@@ -51,7 +49,6 @@ function normalizeCategory(c) {
     name: c?.name || "",
     slug: c?.slug || "",
     description: c?.description || "",
-    heroImage: c?.heroImage || "",
     displayOrder: toNum(c?.displayOrder, 0),
     featured: !!c?.featured,
     active: c?.active !== false,
@@ -66,7 +63,6 @@ export default function AdminCategories() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(newEmptyDraft);
-  const [uploadingHero, setUploadingHero] = useState(false);
 
   const requestSeq = useRef(0);
 
@@ -81,6 +77,11 @@ export default function AdminCategories() {
     });
   }, [items, q]);
 
+  const sortItems = (list) =>
+    list
+      .slice()
+      .sort((a, b) => toNum(a.displayOrder, 0) - toNum(b.displayOrder, 0));
+
   const loadCategories = async () => {
     const seq = ++requestSeq.current;
     setLoading(true);
@@ -91,12 +92,7 @@ export default function AdminCategories() {
 
       const data = Array.isArray(res.data) ? res.data : res.data?.items || [];
       const normalized = data.map(normalizeCategory);
-
-      setItems(
-        normalized
-          .slice()
-          .sort((a, b) => toNum(a.displayOrder, 0) - toNum(b.displayOrder, 0))
-      );
+      setItems(sortItems(normalized));
     } catch (err) {
       if (seq !== requestSeq.current) return;
       console.error(err);
@@ -113,10 +109,6 @@ export default function AdminCategories() {
 
   const closeModal = () => {
     if (saving) return;
-    if (uploadingHero) {
-      toast.error("Please wait for the image upload to finish.");
-      return;
-    }
     setModalOpen(false);
     setDraft(newEmptyDraft());
   };
@@ -150,7 +142,7 @@ export default function AdminCategories() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modalOpen, saving, uploadingHero]);
+  }, [modalOpen, saving]);
 
   const onChange = (key, value) => {
     setDraft((d) => {
@@ -173,8 +165,22 @@ export default function AdminCategories() {
     return null;
   };
 
+  const upsertCategoryInState = (savedCategory) => {
+    const normalized = normalizeCategory(savedCategory);
+
+    setItems((prev) => {
+      const exists = prev.some((x) => x.id === normalized.id);
+      const next = exists
+        ? prev.map((x) => (x.id === normalized.id ? normalized : x))
+        : [...prev, normalized];
+
+      return sortItems(next);
+    });
+  };
+
   const saveDraft = async () => {
     if (saving) return;
+
     const errMsg = validateDraft();
     if (errMsg) {
       toast.error(errMsg);
@@ -187,24 +193,25 @@ export default function AdminCategories() {
         name: draft.name.trim(),
         slug: draft.slug.trim(),
         description: (draft.description || "").trim(),
-        heroImage: (draft.heroImage || "").trim() || null,
         displayOrder: toNum(draft.displayOrder, 0),
         featured: !!draft.featured,
         active: !!draft.active,
         showInMenu: !!draft.showInMenu,
       };
 
+      let res;
       if (draft.id) {
-        await api.put(`/categories/${draft.id}`, payload);
-        toast.success("Category updated");
+        res = await api.put(`/categories/${draft.id}`, payload);
       } else {
-        await api.post(`/categories`, payload);
-        toast.success("Category created");
+        res = await api.post("/categories", payload);
       }
+
+      const saved = normalizeCategory(res?.data || payload);
+      upsertCategoryInState(saved);
 
       window.dispatchEvent(new Event("storefront-navigation-updated"));
       closeModal();
-      await loadCategories();
+      toast.success(draft.id ? "Category updated" : "Category created");
     } catch (err) {
       console.error(err);
       const msg =
@@ -222,20 +229,19 @@ export default function AdminCategories() {
     if (!item.id) return;
 
     try {
-      await api.put(`/categories/${item.id}`, {
+      const res = await api.put(`/categories/${item.id}`, {
         name: item.name,
         slug: item.slug,
         description: item.description,
-        heroImage: item.heroImage?.trim() ? item.heroImage.trim() : null,
         displayOrder: toNum(item.displayOrder, 0),
         featured: !item.featured,
         active: !!item.active,
         showInMenu: !!item.showInMenu,
       });
 
-      toast.success(!item.featured ? "Marked as featured" : "Unfeatured");
+      upsertCategoryInState(res?.data || { ...item, featured: !item.featured });
       window.dispatchEvent(new Event("storefront-navigation-updated"));
-      await loadCategories();
+      toast.success(!item.featured ? "Marked as featured" : "Unfeatured");
     } catch (err) {
       console.error(err);
       toast.error("Failed to update featured status");
@@ -251,9 +257,9 @@ export default function AdminCategories() {
 
     try {
       await api.delete(`/categories/${item.id}`);
-      toast.success("Category deleted");
+      setItems((prev) => prev.filter((x) => x.id !== item.id));
       window.dispatchEvent(new Event("storefront-navigation-updated"));
-      await loadCategories();
+      toast.success("Category deleted");
     } catch (err) {
       console.error(err);
       const msg =
@@ -270,9 +276,9 @@ export default function AdminCategories() {
       const created = Number(res.data?.created || 0);
       const updated = Number(res.data?.updated || 0);
 
-      toast.success(`Categories synced: ${created} created, ${updated} updated`);
-      window.dispatchEvent(new Event("storefront-navigation-updated"));
       await loadCategories();
+      window.dispatchEvent(new Event("storefront-navigation-updated"));
+      toast.success(`Categories synced: ${created} created, ${updated} updated`);
     } catch (err) {
       console.error(err);
       const msg =
@@ -280,43 +286,6 @@ export default function AdminCategories() {
         err?.response?.data?.message ||
         "Failed to sync categories";
       toast.error(msg);
-    }
-  };
-
-  const handleHeroUpload = async (file) => {
-    if (!file) return;
-    if (!file.type?.startsWith("image/")) {
-      toast.error("Please select an image file.");
-      return;
-    }
-
-    setUploadingHero(true);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-
-      const res = await api.post("/admin/upload-image", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const url = res?.data?.url;
-      if (!url) {
-        toast.error("Upload failed: no URL returned");
-        return;
-      }
-
-      onChange("heroImage", url);
-      toast.success("Hero image uploaded");
-      window.dispatchEvent(new Event("storefront-navigation-updated"));
-    } catch (err) {
-      console.error(err);
-      const msg =
-        err?.response?.data?.detail ||
-        err?.response?.data?.message ||
-        "Image upload failed";
-      toast.error(msg);
-    } finally {
-      setUploadingHero(false);
     }
   };
 
@@ -423,11 +392,6 @@ export default function AdminCategories() {
                     <span>
                       Display order: <span className="font-semibold">{toNum(c.displayOrder, 0)}</span>
                     </span>
-                    {c.heroImage ? (
-                      <span className="truncate">
-                        Hero: <span className="font-semibold">{c.heroImage}</span>
-                      </span>
-                    ) : null}
                   </div>
                 </div>
 
@@ -489,7 +453,7 @@ export default function AdminCategories() {
                     onClick={closeModal}
                     className="p-2 border border-gold/30 hover:border-gold"
                     title="Close"
-                    disabled={saving || uploadingHero}
+                    disabled={saving}
                     type="button"
                   >
                     <X className="w-4 h-4" />
@@ -500,7 +464,7 @@ export default function AdminCategories() {
                   <button
                     onClick={closeModal}
                     className="inline-flex items-center gap-2 px-3 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
-                    disabled={saving || uploadingHero}
+                    disabled={saving}
                     type="button"
                   >
                     <ArrowLeft className="w-4 h-4" />
@@ -545,71 +509,6 @@ export default function AdminCategories() {
                     />
                   </div>
 
-                  <div className="md:col-span-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="block text-xs tracking-widest uppercase font-bold text-charcoal">
-                        Hero image
-                      </label>
-
-                      <label
-                        className={`inline-flex items-center gap-2 text-xs tracking-widest uppercase font-bold ${
-                          uploadingHero
-                            ? "text-graphite cursor-not-allowed"
-                            : "text-gold hover:underline cursor-pointer"
-                        }`}
-                      >
-                        <Upload className="w-4 h-4" />
-                        {uploadingHero ? "Uploading…" : "Upload image"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={uploadingHero || saving}
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            await handleHeroUpload(file);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    </div>
-
-                    {draft.heroImage ? (
-                      <div className="relative border border-gold/20 bg-black/5">
-                        <img
-                          src={draft.heroImage}
-                          alt="Hero preview"
-                          className="w-full h-48 md:h-56 object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onChange("heroImage", "")}
-                          className="absolute top-2 right-2 px-3 py-2 bg-charcoal text-gold border border-gold/30 hover:bg-charcoal/90 text-xs tracking-widest uppercase font-bold"
-                          disabled={saving || uploadingHero}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="w-full h-48 md:h-56 border border-gold/20 bg-black/5 flex items-center justify-center text-sm text-graphite">
-                        No hero image uploaded
-                      </div>
-                    )}
-
-                    <div className="mt-3">
-                      <label className="block text-xs tracking-widest uppercase font-bold text-charcoal mb-2">
-                        Or paste image URL (optional)
-                      </label>
-                      <input
-                        value={draft.heroImage || ""}
-                        onChange={(e) => onChange("heroImage", e.target.value)}
-                        className="w-full px-4 py-3 border-b-2 border-gold/30 focus:border-gold bg-transparent focus:ring-0 font-serif"
-                        placeholder="/uploads/your-image.png  (or https://...)"
-                        disabled={uploadingHero}
-                      />
-                    </div>
-                  </div>
-
                   <div>
                     <label className="block text-xs tracking-widest uppercase font-bold text-charcoal mb-2">
                       Display order
@@ -634,7 +533,7 @@ export default function AdminCategories() {
                             ? "bg-charcoal text-gold border-gold"
                             : "bg-transparent text-charcoal border-gold/30 hover:border-gold"
                         }`}
-                        disabled={saving || uploadingHero}
+                        disabled={saving}
                         type="button"
                       >
                         {draft.featured ? "Enabled" : "Disabled"}
@@ -652,7 +551,7 @@ export default function AdminCategories() {
                             ? "bg-charcoal text-gold border-gold"
                             : "bg-transparent text-charcoal border-gold/30 hover:border-gold"
                         }`}
-                        disabled={saving || uploadingHero}
+                        disabled={saving}
                         type="button"
                       >
                         {draft.active ? "Enabled" : "Disabled"}
@@ -670,7 +569,7 @@ export default function AdminCategories() {
                             ? "bg-charcoal text-gold border-gold"
                             : "bg-transparent text-charcoal border-gold/30 hover:border-gold"
                         }`}
-                        disabled={saving || uploadingHero}
+                        disabled={saving}
                         type="button"
                       >
                         {draft.showInMenu ? "Enabled" : "Disabled"}
@@ -683,7 +582,7 @@ export default function AdminCategories() {
                   <button
                     onClick={closeModal}
                     className="inline-flex items-center gap-2 px-4 py-2 border border-gold/30 hover:border-gold bg-card text-charcoal text-xs tracking-widest uppercase"
-                    disabled={saving || uploadingHero}
+                    disabled={saving}
                     type="button"
                   >
                     <X className="w-4 h-4" />
@@ -693,7 +592,7 @@ export default function AdminCategories() {
                   <button
                     onClick={saveDraft}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-charcoal text-gold border border-gold hover:bg-transparent hover:text-charcoal transition-all duration-300 text-xs tracking-widest uppercase font-bold disabled:opacity-50"
-                    disabled={saving || uploadingHero}
+                    disabled={saving}
                     type="button"
                   >
                     <Save className="w-4 h-4" />
