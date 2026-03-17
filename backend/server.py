@@ -224,6 +224,25 @@ db = client[db_name]
 app = FastAPI()
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 api_router = APIRouter(prefix="/api")
+ 
+# =============CATEGORY HELPERS==============
+def _serialize_category(doc: Dict[str, Any]) -> Dict[str, Any]:
+    if not doc:
+        return {}
+
+    return {
+        "id": str(doc.get("id") or ""),
+        "name": str(doc.get("name") or "").strip(),
+        "slug": str(doc.get("slug") or "").strip(),
+        "description": str(doc.get("description") or "").strip(),
+        "heroImage": doc.get("heroImage"),
+        "active": bool(doc.get("active", True)),
+        "showInMenu": bool(doc.get("showInMenu", True)),
+        "featured": bool(doc.get("featured", False)),
+        "displayOrder": int(doc.get("displayOrder") or 0),
+        "createdAt": doc.get("createdAt"),
+        "updatedAt": doc.get("updatedAt"),
+    }
 
 
 # ==================== AUTH HELPERS ====================
@@ -930,14 +949,22 @@ async def update_review(review_id: str, updates: Dict[str, Any], session: Dict[s
 @api_router.get("/categories")
 async def list_categories(session: Dict[str, Any] = Depends(require_admin)):
     categories = await db.categories.find({}, {"_id": 0}).sort("displayOrder", 1).to_list(500)
-    return categories
-
+    return [_serialize_category(c) for c in categories]
 
 @api_router.post("/categories")
 async def create_category(category: Category, session: Dict[str, Any] = Depends(require_admin)):
     category_dict = category.dict()
+
+    category_dict["id"] = str(category_dict.get("id") or str(uuid.uuid4()))
     category_dict["name"] = str(category_dict.get("name") or "").strip()
     category_dict["slug"] = _slugify_text(category_dict.get("slug") or category_dict["name"])
+    category_dict["description"] = str(category_dict.get("description") or "").strip()
+    category_dict["heroImage"] = category_dict.get("heroImage") or None
+    category_dict["active"] = bool(category_dict.get("active", True))
+    category_dict["showInMenu"] = bool(category_dict.get("showInMenu", True))
+    category_dict["featured"] = bool(category_dict.get("featured", False))
+    category_dict["displayOrder"] = int(category_dict.get("displayOrder") or 0)
+    category_dict["createdAt"] = category_dict.get("createdAt") or datetime.now(timezone.utc).isoformat()
     category_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
     if not category_dict["name"]:
@@ -945,13 +972,12 @@ async def create_category(category: Category, session: Dict[str, Any] = Depends(
     if not category_dict["slug"]:
         raise HTTPException(status_code=400, detail="Category slug is required")
 
-    existing = await db.categories.find_one({"slug": category_dict["slug"]}, {"_id": 0})
+    existing = await db.categories.find_one({"slug": category_dict["slug"]}, {"_id": 1})
     if existing:
         raise HTTPException(status_code=400, detail="Category slug already exists")
 
     await db.categories.insert_one(category_dict)
-    return category_dict
-
+    return _serialize_category(category_dict)
 
 @api_router.put("/categories/{category_id}")
 async def update_category(category_id: str, category: Category, session: Dict[str, Any] = Depends(require_admin)):
@@ -960,10 +986,17 @@ async def update_category(category_id: str, category: Category, session: Dict[st
         raise HTTPException(status_code=404, detail="Category not found")
 
     category_dict = category.dict()
+
     category_dict["id"] = category_id
     category_dict["name"] = str(category_dict.get("name") or "").strip()
     category_dict["slug"] = _slugify_text(category_dict.get("slug") or category_dict["name"])
-    category_dict["createdAt"] = existing.get("createdAt") or category_dict.get("createdAt")
+    category_dict["description"] = str(category_dict.get("description") or "").strip()
+    category_dict["heroImage"] = category_dict.get("heroImage") or None
+    category_dict["active"] = bool(category_dict.get("active", True))
+    category_dict["showInMenu"] = bool(category_dict.get("showInMenu", True))
+    category_dict["featured"] = bool(category_dict.get("featured", False))
+    category_dict["displayOrder"] = int(category_dict.get("displayOrder") or 0)
+    category_dict["createdAt"] = existing.get("createdAt") or datetime.now(timezone.utc).isoformat()
     category_dict["updatedAt"] = datetime.now(timezone.utc).isoformat()
 
     if not category_dict["name"]:
@@ -973,14 +1006,13 @@ async def update_category(category_id: str, category: Category, session: Dict[st
 
     dup = await db.categories.find_one(
         {"slug": category_dict["slug"], "id": {"$ne": category_id}},
-        {"_id": 0},
+        {"_id": 1},
     )
     if dup:
         raise HTTPException(status_code=400, detail="Category slug already exists")
 
     await db.categories.update_one({"id": category_id}, {"$set": category_dict})
-    return category_dict
-
+    return _serialize_category(category_dict)
 
 @api_router.delete("/categories/{category_id}")
 async def delete_category(category_id: str, session: Dict[str, Any] = Depends(require_admin)):
