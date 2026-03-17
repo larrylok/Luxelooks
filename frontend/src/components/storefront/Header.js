@@ -1,19 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ShoppingCart, Heart, Search, Menu, X } from "lucide-react";
 import api from "@/api";
 import storage from "@/utils/storage";
 import logoMark from "@/assets/luxe_looks_logo.png";
-
-function uniqueBySlug(items = []) {
-  const seen = new Set();
-  return items.filter((item) => {
-    const slug = String(item?.slug || "").trim().toLowerCase();
-    if (!slug || seen.has(slug)) return false;
-    seen.add(slug);
-    return true;
-  });
-}
 
 export default function Header({ onCartClick }) {
   const navigate = useNavigate();
@@ -22,11 +12,7 @@ export default function Header({ onCartClick }) {
   const [wishlistCount, setWishlistCount] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const [navData, setNavData] = useState({
-    categories: [],
-    pages: [],
-    collections: [],
-  });
+  const [navData, setNavData] = useState({ categories: [], collections: [], pages: [] });
 
   useEffect(() => {
     loadCounts();
@@ -36,18 +22,18 @@ export default function Header({ onCartClick }) {
       setScrolled(window.scrollY > 50);
     };
 
-    const handleNavRefresh = () => {
+    const handleNavUpdate = () => {
       loadNavigation();
     };
 
     window.addEventListener("scroll", handleScroll);
     window.addEventListener("storage-update", loadCounts);
-    window.addEventListener("storefront-navigation-updated", handleNavRefresh);
+    window.addEventListener("storefront-navigation-updated", handleNavUpdate);
 
     return () => {
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("storage-update", loadCounts);
-      window.removeEventListener("storefront-navigation-updated", handleNavRefresh);
+      window.removeEventListener("storefront-navigation-updated", handleNavUpdate);
     };
   }, []);
 
@@ -64,30 +50,18 @@ export default function Header({ onCartClick }) {
       const res = await api.get("/storefront/navigation");
       setNavData({
         categories: Array.isArray(res.data?.categories) ? res.data.categories : [],
-        pages: Array.isArray(res.data?.pages) ? res.data.pages : [],
         collections: Array.isArray(res.data?.collections) ? res.data.collections : [],
+        pages: Array.isArray(res.data?.pages) ? res.data.pages : [],
       });
     } catch (err) {
       console.error("Failed to load storefront navigation:", err);
-      setNavData({
-        categories: [],
-        pages: [],
-        collections: [],
-      });
+      setNavData({ categories: [], collections: [], pages: [] });
     }
   };
 
-  const topCategories = useMemo(() => {
-    return uniqueBySlug(navData.categories)
-      .filter((category) => category?.showInMenu !== false)
-      .slice(0, 3);
-  }, [navData.categories]);
-
-  const headerPages = useMemo(() => {
-    return uniqueBySlug(navData.pages)
-      .filter((page) => page?.showInHeader)
-      .slice(0, 2);
-  }, [navData.pages]);
+  const topCategories = navData.categories.filter((c) => c.showInMenu !== false);
+  const headerPages = navData.pages.filter((p) => p.showInHeader);
+  const featuredCollections = navData.collections.filter((c) => c.featured).slice(0, 2);
 
   return (
     <header
@@ -99,17 +73,13 @@ export default function Header({ onCartClick }) {
         <div className="container mx-auto px-6 md:px-12 lg:px-24 max-w-[1600px]">
           <div className="flex items-center justify-between h-20">
             <Link to="/" className="flex items-center shrink-0" data-testid="logo-link">
-              <img
-                src={logoMark}
-                alt="Luxe Looks"
-                className="h-12 w-auto object-contain"
-              />
+              <img src={logoMark} alt="Luxe Looks" className="h-12 w-auto object-contain" />
             </Link>
 
-            <nav className="hidden lg:flex items-center justify-center gap-8 xl:gap-10 flex-1 px-8 overflow-x-auto whitespace-nowrap">
+            <nav className="hidden lg:flex items-center justify-center gap-x-8 gap-y-2 flex-wrap flex-1 px-8">
               <Link
                 to="/"
-                className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 shrink-0"
+                className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 whitespace-nowrap"
                 data-testid="nav-home"
               >
                 Home
@@ -118,8 +88,8 @@ export default function Header({ onCartClick }) {
               {topCategories.map((category) => (
                 <Link
                   key={`cat-${category.slug}`}
-                  to={category.path || `/categories/${category.slug}`}
-                  className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 shrink-0"
+                  to={`/categories/${category.slug}`}
+                  className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 whitespace-nowrap"
                 >
                   {category.name}
                 </Link>
@@ -128,16 +98,26 @@ export default function Header({ onCartClick }) {
               {headerPages.map((page) => (
                 <Link
                   key={`page-${page.slug}`}
-                  to={page.path || `/pages/${page.slug}`}
-                  className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 shrink-0"
+                  to={`/pages/${page.slug}`}
+                  className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 whitespace-nowrap"
                 >
                   {page.name}
                 </Link>
               ))}
 
+              {featuredCollections.map((collection) => (
+                <Link
+                  key={`col-${collection.slug}`}
+                  to={`/?collection=${encodeURIComponent(collection.slug)}`}
+                  className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 whitespace-nowrap"
+                >
+                  {collection.name}
+                </Link>
+              ))}
+
               <Link
                 to="/track-order"
-                className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 shrink-0"
+                className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors duration-300 whitespace-nowrap"
                 data-testid="nav-track-order"
               >
                 Track Order
@@ -148,7 +128,7 @@ export default function Header({ onCartClick }) {
               <button
                 onClick={() => {
                   setMobileMenuOpen(false);
-                  navigate("/");
+                  navigate("/?openFilters=1");
                 }}
                 className="relative p-2 hover:bg-secondary transition-colors duration-300"
                 aria-label="Search"
@@ -202,10 +182,7 @@ export default function Header({ onCartClick }) {
       </div>
 
       {mobileMenuOpen && (
-        <div
-          className="lg:hidden bg-card border-t border-gold/20"
-          data-testid="mobile-menu"
-        >
+        <div className="lg:hidden bg-card border-t border-gold/20" data-testid="mobile-menu">
           <nav className="container mx-auto px-6 py-4 flex flex-col space-y-4">
             <Link
               to="/"
@@ -218,7 +195,7 @@ export default function Header({ onCartClick }) {
             {topCategories.map((category) => (
               <Link
                 key={`m-cat-${category.slug}`}
-                to={category.path || `/categories/${category.slug}`}
+                to={`/categories/${category.slug}`}
                 onClick={() => setMobileMenuOpen(false)}
                 className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors"
               >
@@ -229,11 +206,22 @@ export default function Header({ onCartClick }) {
             {headerPages.map((page) => (
               <Link
                 key={`m-page-${page.slug}`}
-                to={page.path || `/pages/${page.slug}`}
+                to={`/pages/${page.slug}`}
                 onClick={() => setMobileMenuOpen(false)}
                 className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors"
               >
                 {page.name}
+              </Link>
+            ))}
+
+            {featuredCollections.map((collection) => (
+              <Link
+                key={`m-col-${collection.slug}`}
+                to={`/?collection=${encodeURIComponent(collection.slug)}`}
+                onClick={() => setMobileMenuOpen(false)}
+                className="text-sm tracking-widest uppercase text-charcoal hover:text-gold transition-colors"
+              >
+                {collection.name}
               </Link>
             ))}
 
